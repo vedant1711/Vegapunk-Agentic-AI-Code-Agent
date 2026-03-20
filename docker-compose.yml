@@ -1,0 +1,30 @@
+version: "3.9"
+
+services:
+  # --- Main Application ---
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    volumes:
+      - ./workspaces:/app/workspaces
+      - /var/run/docker.sock:/var/run/docker.sock  # Docker-in-Docker for sandbox
+    depends_on:
+      - redis
+    restart: unless-stopped
+
+  # --- Redis (Task Queue + Caching) ---
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+
+volumes:
+  redis_data:

@@ -1,0 +1,32 @@
+# Sandboxed execution environment for agent code execution
+# This container is isolated — the agent runs code inside it safely
+FROM python:3.11-slim
+
+WORKDIR /workspace
+
+# Install common development tools
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git \
+    curl \
+    build-essential \
+    ripgrep \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Node.js for JavaScript/TypeScript projects
+RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+    && apt-get install -y nodejs \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install common Python testing tools
+RUN pip install --no-cache-dir \
+    pytest \
+    pytest-cov \
+    black \
+    ruff \
+    mypy
+
+# Non-root user for security
+RUN useradd -m -s /bin/bash sandbox
+USER sandbox
+
+ENTRYPOINT ["/bin/bash"]
