@@ -8,6 +8,7 @@ from typing import Any
 
 from agent.state import AgentState, TaskStatus
 from llm.provider import llm, ModelTier
+from app.events import event_bus
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +38,8 @@ async def router_node(state: AgentState) -> dict[str, Any]:
     Writes: task_classification, status, current_step
     """
     logger.info(f"🧠 Shaka (Router): Classifying issue #{state.get('issue_number', '?')}")
+    task_id = state.get("task_id", "")
+    event_bus.emit(task_id, "Shaka (Router)", f"Classifying issue #{state.get('issue_number', '?')}...", "info")
 
     messages = [
         {"role": "system", "content": ROUTER_SYSTEM_PROMPT},
@@ -69,6 +72,7 @@ async def router_node(state: AgentState) -> dict[str, Any]:
         classification = "feature"  # Safe default
 
     logger.info(f"🧠 Shaka (Router): Classified as '{classification}'")
+    event_bus.emit(task_id, "Shaka (Router)", f"Classified as '{classification}'", "success")
 
     return {
         "task_classification": classification,

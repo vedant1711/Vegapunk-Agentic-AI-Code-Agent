@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useRef } from "react";
+import { useState, useCallback, useRef, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import AgentCard from "@/components/agent-card";
 import PipelineFlow from "@/components/pipeline-flow";
@@ -11,31 +11,13 @@ import type { Satellite, SatelliteStatus, LogEntry, TaskState } from "@/lib/type
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
-// Simulated pipeline for demo mode
-const DEMO_SEQUENCE = [
-  { satellite: "stella", delay: 500, message: "Cloning repository...", level: "info" as const },
-  { satellite: "stella", delay: 1500, message: "Repository cloned. Branch created: agent/fix-issue-1", level: "success" as const },
-  { satellite: "stella", delay: 800, message: "Running baseline tests...", level: "info" as const },
-  { satellite: "stella", delay: 2000, message: "Baseline captured: 1 pre-existing failure", level: "info" as const },
-  { satellite: "shaka", delay: 1000, message: "Classifying issue #1...", level: "info" as const },
-  { satellite: "shaka", delay: 2000, message: "Classified as 'bug_fix' — confidence: high", level: "success" as const },
-  { satellite: "edison", delay: 800, message: "Analyzing codebase structure...", level: "info" as const },
-  { satellite: "edison", delay: 1500, message: "Searching for relevant files: calculator, divide, zero", level: "info" as const },
-  { satellite: "edison", delay: 2500, message: "Implementation plan created (4,200 chars)", level: "success" as const },
-  { satellite: "pythagoras", delay: 800, message: "Reading src/calculator.py (31 lines) [SMALL]", level: "info" as const },
-  { satellite: "pythagoras", delay: 600, message: "Reading tests/test_calculator.py (34 lines) [SMALL]", level: "info" as const },
-  { satellite: "pythagoras", delay: 2000, message: "line_edit: replaced L19-L24 in calculator.py ✅", level: "success" as const },
-  { satellite: "pythagoras", delay: 1000, message: "line_edit: replaced L28-L31 in test_calculator.py ✅", level: "success" as const },
-  { satellite: "atlas", delay: 800, message: "Running tests (attempt #1)...", level: "info" as const },
-  { satellite: "atlas", delay: 500, message: "Lint: skipped (no linter config)", level: "info" as const },
-  { satellite: "atlas", delay: 2000, message: "1 failure is PRE-EXISTING. Treating as PASS ✅", level: "success" as const },
-  { satellite: "lilith", delay: 800, message: "Starting self-review...", level: "info" as const },
-  { satellite: "lilith", delay: 2500, message: "✅ Approved — changes are correct and clean", level: "success" as const },
-  { satellite: "york", delay: 600, message: "Committing changes...", level: "info" as const },
-  { satellite: "york", delay: 1000, message: "Committed 2bb6efc", level: "info" as const },
-  { satellite: "york", delay: 1500, message: "Pushed branch agent/fix-issue-1", level: "info" as const },
-  { satellite: "york", delay: 2000, message: "✅ PR created → github.com/...#2", level: "success" as const },
-];
+// Map satellite names from backend events to satellite IDs
+function satelliteNameToId(name: string): string | null {
+  for (const [key, id] of Object.entries(LOG_SATELLITE_MAP)) {
+    if (name.includes(key)) return id;
+  }
+  return null;
+}
 
 export default function Dashboard() {
   const [taskState, setTaskState] = useState<TaskState>({
@@ -48,6 +30,7 @@ export default function Dashboard() {
   });
   const [satellites, setSatellites] = useState<Satellite[]>(SATELLITES.map(s => ({ ...s })));
   const logIdCounter = useRef(0);
+  const eventSourceRef = useRef<EventSource | null>(null);
 
   const addLog = useCallback((satellite: string, message: string, level: LogEntry["level"]) => {
     const now = new Date();
@@ -55,7 +38,7 @@ export default function Dashboard() {
     const entry: LogEntry = {
       id: `log-${logIdCounter.current++}`,
       timestamp: ts,
-      satellite: SATELLITES.find(s => s.id === satellite)?.name || satellite,
+      satellite,
       message,
       level,
     };
@@ -76,49 +59,102 @@ export default function Dashboard() {
     }));
   }, []);
 
-  const runDemo = useCallback(async () => {
+  // Connect to real-time SSE stream for a task
+  const connectSSE = useCallback((taskId: string) => {
+    if (eventSourceRef.current) {
+      eventSourceRef.current.close();
+    }
+
+    const es = new EventSource(`${API_BASE}/api/tasks/${taskId}/events`);
+    eventSourceRef.current = es;
+
+    let lastSatelliteId: string | null = null;
+
+    es.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        const satId = satelliteNameToId(data.satellite);
+
+        // If satellite changed, mark previous as done and new as active
+        if (satId && satId !== lastSatelliteId) {
+          if (lastSatelliteId) {
+            updateSatelliteStatus(lastSatelliteId, "done");
+          }
+          updateSatelliteStatus(satId, "active", data.message);
+          lastSatelliteId = satId;
+        } else if (satId) {
+          updateSatelliteStatus(satId, "active", data.message);
+        }
+
+        addLog(data.satellite, data.message, data.level || "info");
+
+        // Check if finished
+        if (data.message.includes("finished") || data.message.includes("Task failed")) {
+          if (lastSatelliteId) {
+            updateSatelliteStatus(lastSatelliteId, data.message.includes("failed") ? "error" : "done");
+          }
+          setTaskState(prev => ({
+            ...prev,
+            status: data.message.includes("failed") ? "failed" : "completed",
+            activeSatellite: null,
+          }));
+
+          // Extract PR URL if present
+          const prMatch = data.message.match(/https:\/\/github\.com\/[^\s]+/);
+          if (prMatch) {
+            setTaskState(prev => ({ ...prev, prUrl: prMatch[0] }));
+          }
+
+          es.close();
+        }
+      } catch {
+        // Ignore parse errors
+      }
+    };
+
+    es.onerror = () => {
+      // Reconnect or close
+      setTimeout(() => {
+        if (es.readyState === EventSource.CLOSED) {
+          // Check task status via poll
+          fetch(`${API_BASE}/api/tasks/${taskId}`)
+            .then(r => r.json())
+            .then(data => {
+              if (data.pr_url) {
+                setTaskState(prev => ({
+                  ...prev,
+                  status: "completed",
+                  prUrl: data.pr_url,
+                }));
+              }
+            })
+            .catch(() => {});
+        }
+      }, 2000);
+    };
+  }, [addLog, updateSatelliteStatus]);
+
+  // Cleanup SSE on unmount
+  useEffect(() => {
+    return () => {
+      if (eventSourceRef.current) {
+        eventSourceRef.current.close();
+      }
+    };
+  }, []);
+
+  const handleSubmit = useCallback(async (issueUrl: string) => {
     // Reset state
     setSatellites(SATELLITES.map(s => ({ ...s, status: "idle", lastMessage: undefined })));
     setTaskState({
-      taskId: "demo-" + Date.now().toString(36),
+      taskId: "",
       status: "running",
-      issueUrl: "https://github.com/vedant1711/test-repo/issues/1",
+      issueUrl,
       activeSatellite: null,
       satellites: {},
       logs: [],
     });
 
-    let currentSatellite = "";
-
-    for (const step of DEMO_SEQUENCE) {
-      await new Promise(r => setTimeout(r, step.delay));
-
-      // If satellite changed, mark previous as done
-      if (step.satellite !== currentSatellite) {
-        if (currentSatellite) {
-          updateSatelliteStatus(currentSatellite, "done");
-        }
-        currentSatellite = step.satellite;
-        updateSatelliteStatus(step.satellite, "active");
-      }
-
-      addLog(step.satellite, step.message, step.level);
-      updateSatelliteStatus(step.satellite, "active", step.message);
-    }
-
-    // Mark last satellite as done
-    updateSatelliteStatus(currentSatellite, "done");
-
-    setTaskState(prev => ({
-      ...prev,
-      status: "completed",
-      activeSatellite: null,
-      prUrl: "https://github.com/vedant1711/test-repo/pull/2",
-    }));
-  }, [addLog, updateSatelliteStatus]);
-
-  const handleSubmit = useCallback(async (issueUrl: string) => {
-    // Try to call the real API first
     try {
       const res = await fetch(`${API_BASE}/api/tasks/from-url`, {
         method: "POST",
@@ -131,23 +167,19 @@ export default function Dashboard() {
         setTaskState(prev => ({
           ...prev,
           taskId: data.task_id,
-          status: "queued",
-          issueUrl,
-          logs: [],
+          status: "running",
         }));
-        addLog("stella", `Task ${data.task_id} queued for ${issueUrl}`, "info");
-        // TODO: Connect WebSocket for real-time updates
-        // For now, fall through to demo
-        setTimeout(() => runDemo(), 1000);
+        addLog("System", `Task ${data.task_id} queued — connecting to live stream...`, "info");
+
+        // Connect to SSE for real-time events
+        connectSSE(data.task_id);
         return;
       }
     } catch {
-      // API not available, run demo
+      addLog("System", "Backend not available — check that uvicorn is running on port 8000", "error");
+      setTaskState(prev => ({ ...prev, status: "failed" }));
     }
-
-    addLog("stella", "Backend not available — running demo simulation", "warning");
-    runDemo();
-  }, [addLog, runDemo]);
+  }, [addLog, connectSSE]);
 
   return (
     <div className="relative z-10 min-h-screen">
@@ -209,10 +241,15 @@ export default function Dashboard() {
           activeSatellite={taskState.activeSatellite}
         />
 
-        {/* Dashboard Grid: Agent Cards + Log Stream */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Agent Cards */}
-          <div className="lg:col-span-2 grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
+        {/* Two-column: Log Stream (main) + Agent Cards (side) */}
+        <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
+          {/* Log Stream — takes 3 columns, prominent */}
+          <div className="lg:col-span-3 lg:order-1">
+            <LogStream logs={taskState.logs} />
+          </div>
+
+          {/* Agent Cards — takes 2 columns */}
+          <div className="lg:col-span-2 lg:order-2 grid grid-cols-1 sm:grid-cols-2 gap-3">
             {satellites.map((sat, idx) => (
               <AgentCard
                 key={sat.id}
@@ -221,11 +258,6 @@ export default function Dashboard() {
                 index={idx}
               />
             ))}
-          </div>
-
-          {/* Log Stream */}
-          <div className="lg:col-span-1">
-            <LogStream logs={taskState.logs} />
           </div>
         </div>
       </main>

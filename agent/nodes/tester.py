@@ -9,6 +9,7 @@ from typing import Any
 
 from agent.state import AgentState, TaskStatus
 from tools.test_runner import run_tests, run_linter
+from app.events import event_bus
 
 logger = logging.getLogger(__name__)
 
@@ -35,8 +36,10 @@ async def tester_node(state: AgentState) -> dict[str, Any]:
     workspace = state.get("workspace_path", "")
     retry_count = state.get("retry_count", 0)
     baseline_failures = state.get("baseline_test_failures", [])
+    task_id = state.get("task_id", "")
 
     logger.info(f"🔨 Atlas (Tester): Running tests (attempt #{retry_count + 1}) in {workspace}")
+    event_bus.emit(task_id, "Atlas (Tester)", f"Running tests (attempt #{retry_count + 1})", "info")
 
     # Validate workspace
     if not workspace or not os.path.isdir(workspace):
@@ -79,6 +82,7 @@ async def tester_node(state: AgentState) -> dict[str, Any]:
         all_passed = raw_passed
 
     logger.info(f"🔨 Atlas (Tester): Final verdict: {'PASSED ✅' if all_passed else 'FAILED ❌'}")
+    event_bus.emit(task_id, "Atlas (Tester)", f"Final verdict: {'PASSED ✅' if all_passed else 'FAILED ❌'}", "success" if all_passed else "error")
 
     if not all_passed:
         # Log output for debugging

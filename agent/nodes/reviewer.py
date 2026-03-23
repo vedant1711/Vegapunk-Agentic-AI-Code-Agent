@@ -9,6 +9,7 @@ from typing import Any
 from agent.state import AgentState, TaskStatus
 from llm.provider import llm, ModelTier
 from tools.git_ops import get_diff
+from app.events import event_bus
 
 logger = logging.getLogger(__name__)
 
@@ -42,7 +43,9 @@ async def reviewer_node(state: AgentState) -> dict[str, Any]:
     Writes: review_feedback, review_approved, pr_title, pr_body, status
     """
     workspace = state.get("workspace_path", "")
+    task_id = state.get("task_id", "")
     logger.info("😈 Lilith (Reviewer): Starting self-review")
+    event_bus.emit(task_id, "Lilith (Reviewer)", "Starting self-review...", "info")
 
     # Get the diff of all changes
     diff_result = await get_diff(workspace)
@@ -105,6 +108,7 @@ Review and provide your assessment.""",
     feedback = review.get("feedback", "")
 
     logger.info(f"😈 Lilith (Reviewer): {'✅ Approved' if approved else '❌ Rejected'}")
+    event_bus.emit(task_id, "Lilith (Reviewer)", f"{'✅ Approved' if approved else '❌ Rejected'}", "success" if approved else "warning")
 
     if approved:
         # Generate PR title and body

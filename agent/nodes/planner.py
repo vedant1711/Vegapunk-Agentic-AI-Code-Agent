@@ -9,6 +9,7 @@ from agent.state import AgentState, TaskStatus
 from llm.provider import llm, ModelTier
 from tools.code_search import get_file_structure, find_relevant_files
 from tools.github_api import github_api
+from app.events import event_bus
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +36,9 @@ async def planner_node(state: AgentState) -> dict[str, Any]:
     Writes: implementation_plan, status, current_step
     """
     workspace = state.get("workspace_path", "")
+    task_id = state.get("task_id", "")
     logger.info(f"💡 Edison (Planner): Starting analysis for {state.get('issue_title', '?')}")
+    event_bus.emit(task_id, "Edison (Planner)", f"Analyzing: {state.get('issue_title', '?')}", "info")
 
     # Step 1: Get repository structure
     structure = await get_file_structure(workspace)
@@ -94,6 +97,7 @@ Create a detailed implementation plan.""",
     plan = await llm.chat(messages=messages, tier=ModelTier.HEAVY, temperature=0.2, max_tokens=4096)
 
     logger.info(f"💡 Edison (Planner): Plan created ({len(plan)} chars)")
+    event_bus.emit(task_id, "Edison (Planner)", f"Plan created ({len(plan)} chars)", "success")
 
     return {
         "implementation_plan": plan,

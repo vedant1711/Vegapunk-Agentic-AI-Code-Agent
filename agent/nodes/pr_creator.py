@@ -8,6 +8,7 @@ from typing import Any
 from agent.state import AgentState, TaskStatus
 from tools.git_ops import commit_changes, push_branch
 from tools.github_api import github_api
+from app.events import event_bus
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +24,8 @@ async def pr_creator_node(state: AgentState) -> dict[str, Any]:
     repo_name = state.get("repo_full_name", "")
 
     logger.info(f"🎯 York (PR Creator): Committing and pushing to {branch}")
+    task_id = state.get("task_id", "")
+    event_bus.emit(task_id, "York (PR Creator)", f"Committing to {branch}...", "info")
 
     # Step 1: Commit all changes
     issue_num = state.get("issue_number", "")
@@ -71,6 +74,7 @@ async def pr_creator_node(state: AgentState) -> dict[str, Any]:
 
         pr_url = pr_result.get("url", "")
         logger.info(f"🎯 York (PR Creator): Created PR → {pr_url}")
+        event_bus.emit(task_id, "York (PR Creator)", f"✅ PR created → {pr_url}", "success")
 
         # Post a comment on the original issue
         await github_api.post_comment(

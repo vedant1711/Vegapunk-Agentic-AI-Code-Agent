@@ -12,6 +12,7 @@ from typing import Any
 from agent.state import AgentState, TaskStatus
 from llm.provider import llm, ModelTier
 from tools.filesystem import read_file, write_file
+from app.events import event_bus
 
 logger = logging.getLogger(__name__)
 
@@ -66,6 +67,8 @@ async def coder_node(state: AgentState) -> dict[str, Any]:
     test_results = state.get("test_results", {})
 
     logger.info(f"💻 Pythagoras (Coder): Implementing changes (retry #{state.get('retry_count', 0)})")
+    task_id = state.get("task_id", "")
+    event_bus.emit(task_id, "Pythagoras (Coder)", f"Implementing changes (retry #{state.get('retry_count', 0)})", "info")
 
     # Step 1: Read relevant files WITH line numbers
     file_contents = await _read_relevant_files(workspace, plan)
@@ -111,6 +114,7 @@ async def coder_node(state: AgentState) -> dict[str, Any]:
         ok = result.get("success", False)
         err = result.get("error", "")
         logger.info(f"💻 Pythagoras (Coder): {change.get('action','?')} → {change.get('file_path','?')}: {'✅' if ok else f'❌ {err}'}")
+        event_bus.emit(task_id, "Pythagoras (Coder)", f"{change.get('action','?')} → {change.get('file_path','?')}: {'✅' if ok else f'❌ {err}'}", "success" if ok else "error")
 
     return {
         "code_changes": applied_changes,

@@ -65,3 +65,6 @@ class AgentState(TypedDict):
 
     # --- Baseline ---
     baseline_test_failures: list[str]  # Test names that were already failing before changes
+
+    # --- Frontend Events ---
+    task_id: str  # Task ID for SSE event streaming

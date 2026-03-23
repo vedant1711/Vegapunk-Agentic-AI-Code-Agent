@@ -16,6 +16,7 @@ from agent.nodes.reviewer import reviewer_node
 from agent.nodes.pr_creator import pr_creator_node
 from tools.git_ops import clone_repo, create_branch
 from tools.github_api import github_api
+from app.events import event_bus
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +34,8 @@ async def setup_node(state: AgentState) -> dict[str, Any]:
     issue_num = state.get("issue_number", 0)
 
     logger.info(f"⚙️ Stella (Setup): Cloning {repo_name}")
+    task_id = state.get("task_id", "")
+    event_bus.emit(task_id, "Stella (Setup)", f"Cloning {repo_name}...", "info")
 
     # Clone the repository
     clone_result = await clone_repo(clone_url)
@@ -60,6 +63,7 @@ async def setup_node(state: AgentState) -> dict[str, Any]:
             }
 
     logger.info(f"⚙️ Stella (Setup): Ready at {workspace} on branch {branch_name}")
+    event_bus.emit(task_id, "Stella (Setup)", f"Ready on branch {branch_name}", "success")
 
     # Run baseline tests BEFORE changes to capture pre-existing failures
     from tools.test_runner import run_tests
@@ -78,8 +82,10 @@ async def setup_node(state: AgentState) -> dict[str, Any]:
                     baseline_failures.append(match.group(1))
         if baseline_failures:
             logger.info(f"⚙️ Stella (Setup): Baseline has {len(baseline_failures)} pre-existing failures: {baseline_failures}")
+            event_bus.emit(task_id, "Stella (Setup)", f"Baseline: {len(baseline_failures)} pre-existing failures captured", "warning")
         else:
             logger.info("⚙️ Stella (Setup): Baseline — all tests pass")
+            event_bus.emit(task_id, "Stella (Setup)", "Baseline: all tests pass ✅", "success")
     except Exception as e:
         logger.warning(f"⚙️ Stella (Setup): Baseline test run failed: {e}")
 
@@ -177,9 +183,10 @@ async def run_agent(
     repo_full_name: str,
     issue_number: int,
     issue_title: str,
-    issue_body: str,
+    issue_body: str = "",
     issue_labels: list[str] | None = None,
-    repo_clone_url: str | None = None,
+    repo_clone_url: str = "",
+    task_id: str = "",
 ) -> dict[str, Any]:
     """Run the full agent pipeline for a GitHub issue.
 
@@ -190,6 +197,7 @@ async def run_agent(
         issue_body: Issue description.
         issue_labels: Optional issue labels.
         repo_clone_url: HTTPS clone URL (auto-generated if not provided).
+        task_id: Task ID for SSE event streaming.
 
     Returns:
         Final agent state with results.
@@ -222,6 +230,7 @@ async def run_agent(
         "error": "",
         "messages": [],
         "baseline_test_failures": [],
+        "task_id": task_id,
     }
 
     logger.info(f"🏴\u200d☠️ Vegapunk starting agent for {repo_full_name}#{issue_number}: {issue_title}")

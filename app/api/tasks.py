@@ -2,14 +2,17 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import uuid
 from typing import Any
 
 from fastapi import APIRouter, BackgroundTasks
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from agent.graph import run_agent
+from app.events import event_bus
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/tasks", tags=["tasks"])
@@ -35,6 +38,7 @@ class TaskFromURL(BaseModel):
 async def _run_task(task_id: str, request: TaskRequest) -> None:
     """Background task to run the agent."""
     _tasks[task_id]["status"] = "running"
+    event_bus.emit(task_id, "System", f"Task {task_id} started for {request.repo_full_name}#{request.issue_number}", "info")
 
     try:
         result = await run_agent(
@@ -43,6 +47,7 @@ async def _run_task(task_id: str, request: TaskRequest) -> None:
             issue_title=request.issue_title,
             issue_body=request.issue_body,
             issue_labels=request.issue_labels,
+            task_id=task_id,
         )
         _tasks[task_id].update({
             "status": str(result.get("status", "unknown")),
@@ -56,18 +61,17 @@ async def _run_task(task_id: str, request: TaskRequest) -> None:
                 "review_approved": result.get("review_approved", False),
             },
         })
+        pr_url = result.get("pr_url", "")
+        event_bus.emit(task_id, "System", f"🏁 Vegapunk finished — PR: {pr_url}", "success")
     except Exception as e:
         _tasks[task_id].update({"status": "failed", "error": str(e)})
+        event_bus.emit(task_id, "System", f"❌ Task failed: {e}", "error")
         logger.error(f"Task {task_id} failed: {e}", exc_info=True)
 
 
 @router.post("/")
 async def create_task(request: TaskRequest, background_tasks: BackgroundTasks):
-    """Create a new agent task.
-
-    Triggers the full agent pipeline in the background.
-    Returns a task_id for tracking progress.
-    """
+    """Create a new agent task."""
     task_id = str(uuid.uuid4())[:8]
     _tasks[task_id] = {
         "id": task_id,
@@ -86,10 +90,7 @@ async def create_task(request: TaskRequest, background_tasks: BackgroundTasks):
 
 @router.post("/from-url")
 async def create_task_from_url(request: TaskFromURL, background_tasks: BackgroundTasks):
-    """Create a task from a GitHub issue URL.
-
-    Parses the URL and fetches issue details from the GitHub API.
-    """
+    """Create a task from a GitHub issue URL."""
     import re
 
     match = re.match(r"https://github\.com/([^/]+/[^/]+)/issues/(\d+)", request.issue_url)
@@ -132,7 +133,38 @@ async def get_task(task_id: str):
     return _tasks[task_id]
 
 
+@router.get("/{task_id}/events")
+async def stream_events(task_id: str):
+    """Stream real-time events for a task via Server-Sent Events."""
+
+    async def event_generator():
+        async for event in event_bus.subscribe(task_id):
+            if event.message == "keepalive":
+                yield f": keepalive\n\n"
+                continue
+            data = json.dumps({
+                "timestamp": event.timestamp,
+                "satellite": event.satellite,
+                "message": event.message,
+                "level": event.level,
+            })
+            yield f"data: {data}\n\n"
+            if "finished" in event.message.lower() or event.message.startswith("❌ Task failed"):
+                break
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
 @router.get("/")
 async def list_tasks():
     """List all tasks."""
     return {"tasks": list(_tasks.values())}
+
