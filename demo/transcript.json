@@ -1,0 +1,52 @@
+[
+  {"delay_ms": 0,    "type": "log",        "step": "System",     "message": "Task started for octocat/timezone-lib#42 (demo mode - pre-recorded transcript)", "level": "info"},
+
+  {"delay_ms": 150,  "type": "step_start", "step": "Setup"},
+  {"delay_ms": 120,  "type": "log",        "step": "Setup",      "message": "Cloning octocat/timezone-lib", "level": "info"},
+  {"delay_ms": 1600, "type": "log",        "step": "Setup",      "message": "Ready on branch agent/fix-issue-42", "level": "success"},
+  {"delay_ms": 500,  "type": "log",        "step": "Setup",      "message": "Baseline: all tests pass", "level": "success"},
+  {"delay_ms": 100,  "type": "log",        "step": "Setup",      "message": "Indexing repository (tree-sitter)...", "level": "info"},
+  {"delay_ms": 900,  "type": "log",        "step": "Setup",      "message": "Indexed: 47 files, 234 symbols, 1102 refs, 89 edges, 890ms", "level": "success"},
+  {"delay_ms": 80,   "type": "step_end",   "step": "Setup",      "status": "success", "duration_ms": 3450},
+
+  {"delay_ms": 100,  "type": "step_start", "step": "Router"},
+  {"delay_ms": 80,   "type": "log",        "step": "Router",     "message": "Classifying issue #42", "level": "info"},
+  {"delay_ms": 700,  "type": "log",        "step": "Router",     "message": "Classified as 'bug_fix'", "level": "success"},
+  {"delay_ms": 60,   "type": "step_end",   "step": "Router",     "status": "success", "duration_ms": 780},
+
+  {"delay_ms": 100,  "type": "step_start", "step": "Planner"},
+  {"delay_ms": 100,  "type": "log",        "step": "Planner",    "message": "Analyzing: DST offset calculation returns wrong hour after fall-back", "level": "info"},
+  {"delay_ms": 2100, "type": "log",        "step": "Planner",    "message": "Plan created (1247 chars)", "level": "success"},
+  {"delay_ms": 60,   "type": "step_end",   "step": "Planner",    "status": "success", "duration_ms": 2260},
+
+  {"delay_ms": 100,  "type": "step_start", "step": "Coder"},
+  {"delay_ms": 60,   "type": "log",        "step": "Coder",      "message": "Implementing changes (retry #0)", "level": "info"},
+  {"delay_ms": 90,   "type": "log",        "step": "Coder",      "message": "Best-of-N: generating 3 candidates in parallel (temps=[0.1, 0.5, 0.9])", "level": "info"},
+  {"delay_ms": 100,  "type": "log",        "step": "Coder",      "message": "Candidate 0: generating (temp=0.1)", "level": "info"},
+  {"delay_ms": 30,   "type": "log",        "step": "Coder",      "message": "Candidate 1: generating (temp=0.5)", "level": "info"},
+  {"delay_ms": 30,   "type": "log",        "step": "Coder",      "message": "Candidate 2: generating (temp=0.9)", "level": "info"},
+  {"delay_ms": 2600, "type": "log",        "step": "Coder",      "message": "Candidate 1: applied 2/2 ops, diff=14 lines, new_failures=1", "level": "warning"},
+  {"delay_ms": 600,  "type": "log",        "step": "Coder",      "message": "Candidate 0: applied 2/2 ops, diff=8 lines, new_failures=0", "level": "success"},
+  {"delay_ms": 700,  "type": "log",        "step": "Coder",      "message": "Candidate 2: applied 3/3 ops, diff=22 lines, new_failures=0", "level": "success"},
+  {"delay_ms": 80,   "type": "log",        "step": "Coder",      "message": "Best-of-N selected candidate 0 (temp=0.1, new_failures=0, diff_lines=8, applied=2)", "level": "success"},
+  {"delay_ms": 100,  "type": "log",        "step": "Coder",      "message": "line_edit src/timezone.py: ok", "level": "success"},
+  {"delay_ms": 60,   "type": "log",        "step": "Coder",      "message": "line_edit tests/test_timezone.py: ok", "level": "success"},
+  {"delay_ms": 60,   "type": "step_end",   "step": "Coder",      "status": "success", "duration_ms": 4460},
+
+  {"delay_ms": 100,  "type": "step_start", "step": "Tester"},
+  {"delay_ms": 80,   "type": "log",        "step": "Tester",     "message": "Running tests (attempt #1)", "level": "info"},
+  {"delay_ms": 2700, "type": "log",        "step": "Tester",     "message": "Final verdict: PASSED", "level": "success"},
+  {"delay_ms": 60,   "type": "step_end",   "step": "Tester",     "status": "success", "duration_ms": 2840},
+
+  {"delay_ms": 100,  "type": "step_start", "step": "Reviewer"},
+  {"delay_ms": 100,  "type": "log",        "step": "Reviewer",   "message": "Starting self-review", "level": "info"},
+  {"delay_ms": 2200, "type": "log",        "step": "Reviewer",   "message": "Approved", "level": "success"},
+  {"delay_ms": 60,   "type": "step_end",   "step": "Reviewer",   "status": "success", "duration_ms": 2360},
+
+  {"delay_ms": 100,  "type": "step_start", "step": "PR Creator"},
+  {"delay_ms": 100,  "type": "log",        "step": "PR Creator", "message": "Committing to agent/fix-issue-42", "level": "info"},
+  {"delay_ms": 750,  "type": "log",        "step": "PR Creator", "message": "PR created: https://github.com/octocat/timezone-lib/pull/58", "level": "success"},
+  {"delay_ms": 60,   "type": "step_end",   "step": "PR Creator", "status": "success", "duration_ms": 910},
+
+  {"delay_ms": 100,  "type": "run_end",    "step": "System",     "message": "Run finished. PR: https://github.com/octocat/timezone-lib/pull/58", "level": "success", "duration_ms": 17400}
+]

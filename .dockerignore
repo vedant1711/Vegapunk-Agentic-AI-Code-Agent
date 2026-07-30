@@ -1,0 +1,55 @@
+# Root .dockerignore - applies to the backend build context.
+# Everything the backend Docker image does NOT need at build/run time.
+
+# Version control
+.git
+.gitignore
+.github
+
+# Python virtual environments and caches
+.venv
+venv
+env
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache
+.ruff_cache
+.mypy_cache
+htmlcov
+.coverage
+coverage.xml
+*.egg-info
+
+# Local runtime state
+workspaces
+*.db
+*.sqlite
+*.sqlite3
+
+# Frontend has its own build context
+frontend
+
+# Tests and docs not needed at runtime
+tests
+docs
+
+# Editor / OS junk
+.vscode
+.idea
+.DS_Store
+*.swp
+*.swo
+
+# Environment files - inject via docker-compose or platform secrets
+.env
+.env.local
+.env.production
+
+# Build tooling
+Makefile
+render.yaml
+docker-compose.yml
+docker-compose.override.yml
+.dockerignore

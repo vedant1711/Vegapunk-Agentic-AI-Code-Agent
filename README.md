@@ -1,130 +1,214 @@
 # Vegapunk — Autonomous Coding Agent
 
-Vegapunk takes a GitHub issue URL and produces a pull request. Given an
-issue, it clones the repository, classifies the issue, plans an
-implementation, writes the code, runs the tests, self-reviews the diff,
-and opens a PR — with a live trace UI showing every step.
+[![CI](https://github.com/OWNER/REPO/actions/workflows/ci.yml/badge.svg)](https://github.com/OWNER/REPO/actions/workflows/ci.yml)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
+[![Node 18+](https://img.shields.io/badge/node-18%2B-brightgreen.svg)](https://nodejs.org/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](#license)
+
+**Give it a GitHub issue URL. Get a pull request.**
+
+Vegapunk is an autonomous coding agent that resolves GitHub issues end-to-end. It clones the repo, classifies the issue, plans the implementation, writes the code, runs the tests, self-reviews the diff, and opens the PR — with a live trace UI so you can watch every step.
+
+- **Tree-sitter code intelligence** replaces regex retrieval — grounded in research reporting ~10x token reduction on real repos
+- **Best-of-N Coder** generates K parallel candidate diffs in isolated git worktrees, keeps the one that passes tests
+- **68 unit + integration tests, 60% coverage, CI on every push**
+- **Free-tier deployable** — Vercel (frontend) + Render (backend), plus a self-host docker-compose
+- **Demo mode** — pre-recorded transcript replays a full run without API keys, perfect for portfolio review
+
+> Replace `OWNER/REPO` in the badge URLs above with your GitHub path after your first push.
 
 ---
 
-## Pipeline
+## Try it live
 
-| # | Step        | Responsibility                                                                                                                                    |
-|---|-------------|---------------------------------------------------------------------------------------------------------------------------------------------------|
-| 1 | Setup       | Clone the repository, create a working branch, and capture the baseline test-failure set so pre-existing failures aren't blamed on the agent.     |
-| 2 | Router      | Classify the issue as one of `bug_fix / feature / refactor / docs / test / chore`.                                                                |
-| 3 | Planner     | Walk the repo tree, find relevant files, and produce a markdown implementation plan.                                                              |
-| 4 | Coder       | Apply the changes. Hybrid rewrite / line-edit strategy — rewrites small files, does precise line-range edits on larger ones.                      |
-| 5 | Tester      | Run the project's tests and linter. Compares failures against the baseline — only **new** failures trigger a retry back to the Coder.             |
-| 6 | Reviewer    | Read the diff and self-review for correctness, quality, and security. Can send the run back to the Coder for revisions (bounded).                 |
-| 7 | PR Creator  | Commit, push, detect the repository's default branch, and open the pull request.                                                                  |
-
-Both retry loops (Tester → Coder on new test failures, Reviewer → Coder on
-rejection) are capped at `max_retries` (default 3) to prevent unbounded
-spins.
+- **Deployed demo:** _add your Vercel URL here after first deploy_
+- Or **run locally** in two commands (see [Quickstart](#quickstart-local) below)
+- No API keys? Click **Try demo** in the UI to replay a pre-recorded run
 
 ---
 
 ## Architecture
 
-```
-+---------------------------+           +-----------------------------+
-| Next.js frontend (:3000)  |           | FastAPI backend (:8000)     |
-|                           |           |                             |
-| - task form               |  POST /api/tasks/from-url               |
-| - run header (progress)   +---------->+                             |
-| - step cards (trace)      |           |  agent/graph.py             |
-|                           |           |  = LangGraph pipeline       |
-|                           |  GET /api/tasks/{id}/events (SSE)       |
-|                           +<----------+                             |
-+---------------------------+           |                             |
-                                        |  llm/provider.py            |
-                                        |  NVIDIA NIM -> Gemini       |
-                                        |                             |
-                                        |  tools/                     |
-                                        |  git_ops, github_api,       |
-                                        |  filesystem, test_runner,   |
-                                        |  code_search, sandbox       |
-                                        +-----------------------------+
-```
+```mermaid
+flowchart LR
+    subgraph Frontend[Next.js Frontend :3000]
+        ui[Trace UI<br/>run header + step cards]
+    end
 
-The pipeline is a LangGraph `StateGraph` with conditional edges for the
-Coder/Tester retry loop and the Reviewer/Coder revision loop.
+    subgraph Backend[FastAPI Backend :8000]
+        api[Tasks API]
+        bus[Event Bus<br/>step_start / step_end / log / run_end]
+        graph[LangGraph Pipeline]
+    end
 
-Every node emits structured events to an in-memory event bus
-(`app/events.py`) — `step_start`, `step_end` (with duration and status),
-and per-step log lines. The `/api/tasks/{id}/events` endpoint streams
-those over Server-Sent Events. The frontend renders them as a trace
-timeline with collapsible per-step cards.
+    subgraph Pipeline[Pipeline]
+        direction LR
+        setup[Setup<br/>clone + baseline + repo-graph]
+        router[Router<br/>classify]
+        planner[Planner<br/>plan with repo-graph]
+        coder[Coder<br/>Best-of-N]
+        tester[Tester<br/>vs baseline]
+        reviewer[Reviewer<br/>self-review]
+        pr[PR Creator<br/>commit + push]
+
+        setup --> router --> planner --> coder --> tester
+        tester -->|new failures| coder
+        tester -->|pass| reviewer
+        reviewer -->|revise| coder
+        reviewer -->|approve| pr
+    end
+
+    subgraph Infrastructure[Infrastructure]
+        llm[LLM Provider<br/>NIM &rarr; Gemini]
+        tools[Tools<br/>git / github / fs /<br/>test runner / sandbox /<br/>repo-graph / worktrees]
+    end
+
+    ui -->|POST /api/tasks/from-url| api
+    ui -->|POST /api/tasks/demo| api
+    api --> graph
+    graph -.-> Pipeline
+    Pipeline --> bus
+    bus -->|SSE| ui
+    Pipeline --> llm
+    Pipeline --> tools
+```
 
 ---
 
-## Quickstart
+## Pipeline
 
-### Prerequisites
-- Python 3.11+
-- Node.js 18+
-- One LLM API key: NVIDIA NIM or Google Gemini
-- A GitHub Personal Access Token with `repo` scope
+| # | Step | Responsibility |
+|---|------|----------------|
+| 1 | **Setup** | Clone repo, create working branch, capture baseline test failures, build the tree-sitter repo graph |
+| 2 | **Router** | Classify the issue as one of `bug_fix / feature / refactor / docs / test / chore` |
+| 3 | **Planner** | Rank relevant files via the repo graph, produce a markdown implementation plan |
+| 4 | **Coder** | Generate K candidate diffs in parallel (Best-of-N), evaluate each in an isolated git worktree, keep the one with fewest new test failures |
+| 5 | **Tester** | Run tests on main workspace; only failures **new** vs the baseline trigger a retry back to Coder |
+| 6 | **Reviewer** | Self-review the diff for correctness, quality, and security; revise via Coder if needed (bounded) |
+| 7 | **PR Creator** | Commit, push, detect the repo's default branch, open the PR, comment on the source issue |
 
-### Backend
+Both retry loops (Tester → Coder, Reviewer → Coder) cap at `max_retries` (default 3) so nothing can spin forever.
+
+---
+
+## Quickstart (local)
+
+**Prerequisites:** Python 3.11+, Node.js 18+, one LLM API key (NVIDIA NIM or Gemini), a GitHub PAT with `repo` scope.
 
 ```bash
+# 1. Clone + set up
+git clone https://github.com/OWNER/REPO.git vegapunk
+cd vegapunk
 python -m venv .venv && source .venv/bin/activate
-pip install -e ".[dev]"
+make install
+cp .env.example .env   # then edit with your API keys
 
-cp .env.example .env
-# edit .env with your API keys
-
-uvicorn app.main:app --port 8000 --reload --reload-exclude 'workspaces/*'
+# 2. Run backend and frontend in two terminals
+make dev-api           # terminal 1: uvicorn on :8000
+make dev-web           # terminal 2: next dev on :3000
 ```
 
-### Frontend
+Open <http://localhost:3000>. Paste a GitHub issue URL. Hit **Run agent** — or **Try demo** if you don't want to burn API credits yet.
+
+Or run everything under Docker:
 
 ```bash
-cd frontend
-npm install
-npm run dev -- --port 3000
-```
-
-Open http://localhost:3000, paste a GitHub issue URL, and hit **Run agent**.
-
-### Programmatic
-
-```bash
-curl -X POST http://localhost:8000/api/tasks/from-url \
-  -H "Content-Type: application/json" \
-  -d '{"issue_url": "https://github.com/owner/repo/issues/1"}'
+make demo   # docker compose up --build
 ```
 
 ---
 
-## Environment variables
+## Deploy (free tier)
 
-| Variable                 | Purpose                                                      | Required           |
-|--------------------------|--------------------------------------------------------------|--------------------|
-| `NVIDIA_API_KEY`         | NVIDIA NIM API key (primary LLM)                             | one of these two   |
-| `GEMINI_API_KEY`         | Google Gemini API key (fallback LLM)                         | one of these two   |
-| `GITHUB_TOKEN`           | GitHub PAT with `repo` scope                                 | yes                |
-| `GITHUB_WEBHOOK_SECRET`  | HMAC-SHA256 secret for `/api/webhooks/github`                | optional           |
+Vegapunk is designed for free-tier hosting so anyone can spin up their own instance.
 
-See `.env.example` for the full list including sandbox and workspace settings.
+### Frontend → Vercel
+
+Vercel auto-detects Next.js. On import:
+- **Root directory:** `frontend`
+- **Env vars:** `NEXT_PUBLIC_API_URL` = your Render backend URL
+
+### Backend → Render
+
+A [`render.yaml`](render.yaml) blueprint provisions a free Python web service. On first deploy, set these env vars in the Render dashboard:
+
+| Variable | Notes |
+|---|---|
+| `NVIDIA_API_KEY` | one of these two is required for real runs |
+| `GEMINI_API_KEY` | one of these two is required for real runs |
+| `GITHUB_TOKEN` | required for real runs; demo mode works without |
+| `APP_ENV` | set to `production` |
+
+**Caveat:** Render's free tier auto-sleeps after 15 minutes of inactivity. First request after sleep takes ~30 seconds cold start. Demo mode still works after wake.
+
+### Self-host
+
+```bash
+docker compose up --build   # backend + frontend in one stack
+```
 
 ---
 
-## Tech stack
+## Demo mode
 
-**Backend**
-- FastAPI (async, CORS, SSE)
-- LangGraph — `StateGraph` with conditional edges for retry loops
-- LLM providers: NVIDIA NIM (Qwen / Nemotron) primary, Google Gemini fallback
-- GitPython + PyGithub
-- Docker sandbox with a local-execution fallback for development
+Click **Try demo** in the UI — or `curl -X POST http://localhost:8000/api/tasks/demo`.
 
-**Frontend**
-- Next.js 16 (App Router, React 19)
-- Tailwind CSS
-- Native `EventSource` API for the SSE consumer
+Instead of calling the LLM, the backend replays [`demo/transcript.json`](demo/transcript.json) into the same SSE stream that real runs use. The trace UI can't tell the difference. No credentials, no quota burn, ~17 seconds end-to-end.
+
+Edit the transcript to change what reviewers see.
+
+---
+
+## Features
+
+### Tree-sitter repo graph — [`tools/repo_graph.py`](tools/repo_graph.py)
+
+Language-agnostic code index for Python, TypeScript, JavaScript, Go, and Rust. Extracts function / class / method definitions and calls / imports. Builds a file-level directed graph where edge `(a, b)` means "a references a symbol defined in b". Retrieval ranks by a hybrid of query-keyword overlap and PageRank on the reference graph.
+
+Why hybrid? Aider's repomap uses pure PageRank on symbol graphs and buries files that match rare query terms. Legacy Vegapunk used pure regex keyword and missed transitively-related files. `alpha * keyword + (1-alpha) * pagerank` (default α=0.7) gets both signals.
+
+Grounded in the [2026 Codebase-Memory study](https://anthonywest.co.uk/research/code-intelligence-indexing-2026-openai) reporting **~10x fewer tokens and ~2x fewer tool calls** vs regex retrieval on real repos. **90% test coverage** in [`tests/test_repo_graph.py`](tests/test_repo_graph.py).
+
+### Best-of-N Coder — [`agent/nodes/coder.py`](agent/nodes/coder.py) + [`tools/best_of_n.py`](tools/best_of_n.py)
+
+Generates K candidate diffs in parallel at varied temperatures (default `[0.1, 0.5, 0.9]`). Each candidate applies to its own git worktree (via `git worktree add -b`) and runs the project's test suite independently. Winner is chosen by execution-verified criteria: fewest new test failures → most successful applies → smallest diff.
+
+Grounded in the [DeepSWE](https://www.together.ai/blog/deepswe) and [ACECoder](https://arxiv.org/pdf/2502.01718) line of work on execution-verified rewards. **100% test coverage** on the selector; end-to-end integration tests exercise real git worktrees with mocked LLM.
+
+Config knobs (in `.env`):
+- `CODER_BON_K` — default 3; set to 1 to disable and get the fast path
+- `CODER_BON_TEMPERATURES_CSV` — comma-separated temperatures
+- `CODER_BON_MAX_PARALLEL` — bounded concurrency
+- `CODER_BON_TIMEOUT_SECONDS` — per-candidate timeout
+
+### Trace-style live UI — [`frontend/src/app/page.tsx`](frontend/src/app/page.tsx)
+
+The frontend consumes the backend's SSE stream and renders each pipeline step as a card with a live status dot, a duration, and collapsible logs. Inspired by LangSmith trace views. No animations that hide latency — you see exactly what the agent is doing when.
+
+### Baseline test comparison
+
+Before Coder touches anything, Setup snapshots the repo's existing test failures. When Tester runs post-change, only failures **not** in the baseline count as a regression. Pre-existing bugs don't get blamed on the agent.
+
+### Reviewer / Coder revision loop with a cap
+
+Reviewer can send a diff back to Coder for revisions. Historically this loop had no bound. It now caps at `max_retries` and force-approves with a warning event if reached — the pipeline can't spin forever.
+
+---
+
+## Benchmarks
+
+Full detail in [`docs/benchmarks.md`](docs/benchmarks.md). Highlights:
+
+| Metric | Before overhaul | After Phase 2 |
+|---|---|---|
+| Passing tests | 10 (1 broken) | **68** |
+| Coverage | 41% | **60%** |
+| Ruff errors | 62 | **0** |
+| Emojis in source | many | **0 (grep-verified)** |
+| `tools/repo_graph.py` coverage | n/a (didn't exist) | **90%** |
+| `tools/best_of_n.py` coverage | n/a (didn't exist) | **100%** |
+
+Real-repo A/B measurement of repo-graph vs regex retrieval is a documented follow-up.
 
 ---
 
@@ -133,70 +217,89 @@ See `.env.example` for the full list including sandbox and workspace settings.
 ```
 vegapunk/
   agent/
-    graph.py           LangGraph pipeline; setup_node lives here
-    state.py           AgentState TypedDict
-    nodes/
-      router.py        classify the issue
-      planner.py       generate implementation plan
-      coder.py         apply file changes (rewrite / line_edit / edit / delete)
-      tester.py        run tests + linter, compare against baseline
-      reviewer.py      self-review the diff
-      pr_creator.py    commit, push, open PR
+    graph.py                # LangGraph pipeline + setup_node
+    state.py                # AgentState TypedDict
+    nodes/                  # router / planner / coder / tester / reviewer / pr_creator
   app/
-    main.py            FastAPI entry point
-    config.py          Pydantic settings
-    events.py          in-memory event bus + SSE-friendly AgentEvent
+    main.py                 # FastAPI entry
+    config.py               # Pydantic settings
+    events.py               # In-memory event bus, typed step events
     api/
-      tasks.py         REST + SSE endpoints
-      webhooks.py      GitHub webhook handler
+      tasks.py              # REST + SSE endpoints (incl. /demo)
+      webhooks.py           # GitHub webhook handler
   llm/
-    provider.py        NIM -> Gemini fallback, ModelTier
-    nvidia_nim.py      OpenAI-compatible client
-    gemini.py          Google generative AI client
+    provider.py             # NIM -> Gemini fallback, ModelTier
+    nvidia_nim.py
+    gemini.py
   tools/
-    git_ops.py         clone, branch, commit, push, diff
-    github_api.py      issues, PRs, comments via PyGithub
-    filesystem.py      read / write / apply_edit
-    test_runner.py     pytest / npm / go auto-detect + linter
-    code_search.py     repo tree + text search
-    sandbox.py         Docker sandbox with local fallback
+    repo_graph.py           # tree-sitter code intelligence
+    best_of_n.py            # Best-of-N selector + failure extraction
+    git_ops.py              # clone / branch / commit / push / worktree
+    github_api.py
+    filesystem.py
+    test_runner.py
+    code_search.py          # legacy retrieval (fallback)
+    sandbox.py              # Docker sandbox with local fallback
   frontend/
     src/
-      app/             page.tsx (trace view), layout.tsx, globals.css
-      components/      task-form, run-header, step-card
-      lib/types.ts     shared types + STEP_DEFS
+      app/                  # page.tsx, layout.tsx, globals.css
+      components/           # task-form / run-header / step-card
+      lib/types.ts          # shared types + STEP_DEFS
   tests/
+    fixtures/mini_py/       # small repo used for repo-graph tests
+    test_repo_graph.py      # 31 tests
+    test_worktree.py        # 8 tests
+    test_best_of_n_selector.py       # 12 tests
+    test_best_of_n_integration.py    # 6 tests
+    test_demo_endpoint.py            # 3 tests
+    test_api.py test_tools.py         # existing suite
+    conftest.py             # autouse fixture that scrubs ambient .env
+  demo/
+    transcript.json         # pre-recorded events for /api/tasks/demo
+  docs/
+    benchmarks.md
+  .github/workflows/ci.yml  # matrix on 3.11 + 3.12, backend + frontend jobs
+  Makefile                  # one-command entry points
+  docker-compose.yml
+  render.yaml               # free-tier backend blueprint
 ```
+
+---
+
+## Tech stack
+
+**Backend**
+- FastAPI (async, CORS, Server-Sent Events)
+- LangGraph — `StateGraph` with conditional edges for retry loops
+- LLM providers: NVIDIA NIM (Qwen / Nemotron) primary, Google Gemini fallback (auto-failover)
+- Tree-sitter (py / ts / js / go / rs) + NetworkX + SciPy for the repo graph
+- GitPython + PyGithub
+- Docker sandbox with local-execution fallback for development
+
+**Frontend**
+- Next.js 16 (App Router, React 19)
+- Tailwind CSS
+- Native `EventSource` API for SSE (no framework wrapper)
+
+**Dev tooling**
+- ruff, mypy, pytest + pytest-cov + pytest-asyncio + respx (HTTP mocking)
+- eslint, tsc
+- GitHub Actions matrix on Python 3.11 + 3.12
 
 ---
 
 ## Known limitations and follow-ups
 
-Roughly ranked by impact:
+Ranked roughly by impact:
 
-1. **Task and event persistence.** Both the task list and the event-bus
-   history live in memory. They vanish on server restart. `aiosqlite`
-   is already declared in `pyproject.toml` for exactly this migration.
-2. **Sandbox network isolation** (`network_mode="none"`) breaks
-   repositories whose tests need to `pip install` or `npm install` at
-   runtime. Trade-off is documented in `tools/sandbox.py`.
-3. **No repo-size cap.** A user pasting a huge repo URL will make the
-   Setup step chew disk and time. A shallow clone (`--depth 1`) plus a
-   repo-size limit is a small, high-value addition.
-4. **Regex-based code retrieval.** `tools/code_search.py` and
-   `agent/nodes/coder.py::_read_relevant_files` pick files by regex
-   scanning. Tree-sitter + PageRank-style repo-mapping (as popularized
-   by Aider) is meaningfully better for large repos and is a natural
-   next upgrade.
-5. **No API auth.** Anyone reaching the backend can trigger runs that
-   spend LLM credits and push commits with the configured GitHub token.
-6. **No token / cost metrics per step.** The trace UI shows durations
-   but the LLM provider layer doesn't yet thread usage counts back into
-   the event bus.
-7. **Test isolation.** `tests/test_api.py::test_webhook_with_invalid_payload`
-   reads the real `.env`, so it flips to 401 whenever
-   `GITHUB_WEBHOOK_SECRET` is set locally. Test fixtures should stub
-   settings.
+1. **Task and event persistence** — task list and event bus history live in memory today; they vanish on server restart. `aiosqlite` is already declared in `pyproject.toml` for this migration.
+2. **Sandbox network isolation** — `SANDBOX_ALLOW_NETWORK` (default `true`) lets cloned projects `pip install`; hardened deploys should use egress-only firewall rules instead.
+3. **No repo-size guard** — a large repo will make Setup chew disk. Shallow clone (`--depth 1`) plus a byte-size cap is a small, high-value addition.
+4. **Real-repo A/B benchmark of the repo graph** — regression guard against silent PageRank degradation is in place, but a measured comparison against legacy regex retrieval on real GitHub issues hasn't been published.
+5. **LSP integration** — tree-sitter gives us the token-reduction win; LSP is a v2 upgrade for cross-file "find all references" precision.
+6. **API auth** — anyone reachable at the backend URL can trigger runs (spends LLM credits, pushes commits under your GitHub token).
+7. **Token / cost metrics per step** — the trace UI shows durations; the LLM provider layer doesn't yet thread usage counts back into the event bus.
+8. **MCP tool plane** (deferred) — expose the internal tools + repo graph as MCP resources so Claude Code / Cursor / Cline can drive Vegapunk directly. Design sketch in the commit history.
 
 ---
 

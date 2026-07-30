@@ -1,0 +1,59 @@
+# Render Blueprint - free-tier backend deploy for Vegapunk.
+#
+# How to use:
+#   1. Push this repo to GitHub.
+#   2. On Render: "New +" -> "Blueprint" -> point at your repo.
+#   3. Render reads this file, provisions the service, then prompts you
+#      to fill in the "sync: false" secrets in the dashboard.
+#
+# Caveats of the free tier (documented in README):
+#   - Auto-sleeps after 15 minutes of inactivity, ~30s cold start on wake.
+#   - No Docker daemon available - the sandbox transparently falls back to
+#     local subprocess execution.
+#   - 750 free instance-hours per month across all services on the account.
+
+services:
+  - type: web
+    name: vegapunk-api
+    runtime: python
+    plan: free
+    region: oregon   # Render's free tier is available in oregon + singapore
+    branch: main
+    autoDeploy: true
+
+    buildCommand: pip install .
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+
+    healthCheckPath: /health
+
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.11"
+
+      - key: APP_ENV
+        value: production
+
+      - key: LOG_LEVEL
+        value: info
+
+      # No Docker socket on Render free tier - sandbox falls back to local
+      # subprocess execution automatically.
+      - key: SANDBOX_ALLOW_NETWORK
+        value: "true"
+
+      # Best-of-N default. Lower to 1 if you hit free-tier LLM rate limits.
+      - key: CODER_BON_K
+        value: "3"
+
+      # Secrets - Render prompts for these on first deploy.
+      - key: NVIDIA_API_KEY
+        sync: false
+
+      - key: GEMINI_API_KEY
+        sync: false
+
+      - key: GITHUB_TOKEN
+        sync: false
+
+      - key: GITHUB_WEBHOOK_SECRET
+        sync: false

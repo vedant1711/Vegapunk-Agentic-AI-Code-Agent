@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import time
 import uuid
+from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, BackgroundTasks
@@ -14,6 +16,9 @@ from pydantic import BaseModel
 
 from agent.graph import run_agent
 from app.events import event_bus
+
+# Where the pre-recorded demo transcript lives (repo-root/demo/transcript.json).
+_DEMO_TRANSCRIPT_PATH = Path(__file__).resolve().parent.parent.parent / "demo" / "transcript.json"
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/tasks", tags=["tasks"])
@@ -140,6 +145,89 @@ async def create_task_from_url(request: TaskFromURL, background_tasks: Backgroun
         )
 
     return await create_task(task_request, background_tasks)
+
+
+# --- Demo mode ------------------------------------------------------------
+# Replays a pre-recorded transcript over the same SSE channel that real
+# runs use. Lets portfolio reviewers see the trace UI animate without
+# needing NVIDIA / Gemini / GitHub credentials or burning free-tier quota.
+
+
+async def _run_demo(task_id: str) -> None:
+    """Replay demo/transcript.json into the event bus with realistic timing."""
+    _tasks[task_id]["status"] = "running"
+    try:
+        transcript = json.loads(_DEMO_TRANSCRIPT_PATH.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as e:
+        logger.error(f"[demo] Transcript unavailable at {_DEMO_TRANSCRIPT_PATH}: {e}")
+        event_bus.run_end(task_id, f"Demo transcript unavailable: {e}", level="error")
+        _tasks[task_id]["status"] = "failed"
+        _tasks[task_id]["error"] = str(e)
+        return
+
+    pr_url = ""
+    for entry in transcript:
+        await asyncio.sleep(max(0, int(entry.get("delay_ms", 0))) / 1000)
+        etype = entry.get("type", "log")
+        step = entry.get("step", "System")
+
+        if etype == "step_start":
+            event_bus.step_start(task_id, step)
+        elif etype == "step_end":
+            event_bus.step_end(
+                task_id,
+                step,
+                entry.get("status", "success"),
+                (entry.get("duration_ms") or 0) / 1000,
+            )
+        elif etype == "run_end":
+            msg = entry.get("message", "Run finished.")
+            if "http" in msg:
+                # Extract PR URL if the run_end message carries one
+                import re as _re
+                m = _re.search(r"https?://\S+", msg)
+                if m:
+                    pr_url = m.group(0)
+            event_bus.run_end(
+                task_id,
+                msg,
+                level=entry.get("level", "success"),
+                duration_seconds=(entry.get("duration_ms") or 0) / 1000,
+            )
+        else:
+            event_bus.emit(
+                task_id,
+                step,
+                entry.get("message", ""),
+                entry.get("level", "info"),
+            )
+
+    _tasks[task_id].update({
+        "status": "completed",
+        "pr_url": pr_url,
+    })
+
+
+@router.post("/demo")
+async def create_demo_task(background_tasks: BackgroundTasks):
+    """Kick off a pre-recorded demo run.
+
+    Same task/SSE contract as a real run, so the frontend needs no special
+    casing - it just connects to /api/tasks/{id}/events and watches.
+    """
+    task_id = "demo-" + uuid.uuid4().hex[:6]
+    _tasks[task_id] = {
+        "id": task_id,
+        "status": "queued",
+        "repo": "octocat/timezone-lib",
+        "issue": 42,
+        "pr_url": "",
+        "error": "",
+        "demo": True,
+    }
+    background_tasks.add_task(_run_demo, task_id)
+    logger.info(f"[tasks] Demo task {task_id} created")
+    return {"task_id": task_id, "status": "queued", "demo": True}
 
 
 @router.get("/{task_id}")

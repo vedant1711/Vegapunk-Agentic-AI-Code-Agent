@@ -153,21 +153,25 @@ export default function Dashboard() {
     };
   }, []);
 
-  const handleSubmit = useCallback(
-    async (issueUrl: string) => {
+  const startRun = useCallback(
+    async (
+      endpoint: string,
+      body: object | null,
+      issueLabel: string,
+    ) => {
       logSeq = 0;
       setRun({
         ...initialRun(),
-        issueUrl,
+        issueUrl: issueLabel,
         status: "running",
         startedAt: Date.now(),
       });
 
       try {
-        const res = await fetch(`${API_BASE}/api/tasks/from-url`, {
+        const res = await fetch(`${API_BASE}${endpoint}`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ issue_url: issueUrl }),
+          body: body ? JSON.stringify(body) : undefined,
         });
 
         if (res.ok) {
@@ -195,6 +199,16 @@ export default function Dashboard() {
       }
     },
     [connectSSE],
+  );
+
+  const handleSubmit = useCallback(
+    (issueUrl: string) => startRun("/api/tasks/from-url", { issue_url: issueUrl }, issueUrl),
+    [startRun],
+  );
+
+  const handleDemo = useCallback(
+    () => startRun("/api/tasks/demo", null, "demo (pre-recorded)"),
+    [startRun],
   );
 
   const statusDotColor =
@@ -228,7 +242,11 @@ export default function Dashboard() {
       </header>
 
       <main className="max-w-5xl mx-auto px-6 py-6 space-y-4">
-        <TaskForm onSubmit={handleSubmit} isRunning={run.status === "running"} />
+        <TaskForm
+          onSubmit={handleSubmit}
+          onDemo={handleDemo}
+          isRunning={run.status === "running"}
+        />
 
         {run.status !== "idle" && (
           <>
