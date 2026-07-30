@@ -1,9 +1,10 @@
-"""Git operations — clone, branch, commit, push via GitPython."""
+"""Git operations - clone, branch, commit, push, worktree via GitPython."""
 
 from __future__ import annotations
 
 import asyncio
 import logging
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -156,6 +157,86 @@ async def get_diff(repo_path: str) -> dict[str, Any]:
         return {"diff": full_diff, "has_changes": bool(full_diff)}
     except Exception as e:
         return {"error": f"Failed to get diff: {e}"}
+
+
+# --- Worktrees (used by best-of-N candidate generation) ----------------------
+
+
+async def create_worktree(
+    repo_path: str,
+    branch_name: str | None = None,
+) -> dict[str, Any]:
+    """Create a git worktree with a fresh scratch branch.
+
+    Best-of-N generates K candidate diffs and needs each candidate to apply
+    changes independently, so we can't share the main repo's working tree
+    or its index. `git worktree add -b <branch> <path>` creates the branch
+    AND checks it out into a new worktree atomically.
+
+    Args:
+        repo_path: Path to the main repository.
+        branch_name: Optional explicit branch name. If None, generates
+            `agent/candidate-<8-hex>` which is guaranteed unique.
+
+    Returns:
+        Dict with 'worktree_path' and 'branch'. On error: {'error': str}.
+    """
+    try:
+        if not Path(repo_path).is_dir():
+            return {"error": f"Repo path is not a directory: {repo_path}"}
+        repo = Repo(repo_path)
+
+        if branch_name is None:
+            branch_name = f"agent/candidate-{uuid.uuid4().hex[:8]}"
+
+        # Worktree lives beside the main clone, not inside it.
+        parent = Path(repo_path).resolve().parent
+        wt_name = f"{Path(repo_path).name}-wt-{uuid.uuid4().hex[:8]}"
+        wt_path = parent / wt_name
+
+        await asyncio.to_thread(
+            repo.git.worktree, "add", "-b", branch_name, str(wt_path)
+        )
+        logger.info(f"[worktree] Created {wt_path} on branch {branch_name}")
+        return {"worktree_path": str(wt_path), "branch": branch_name}
+    except Exception as e:
+        return {"error": f"Failed to create worktree: {e}"}
+
+
+async def remove_worktree(
+    repo_path: str,
+    worktree_path: str,
+    branch_name: str | None = None,
+) -> dict[str, Any]:
+    """Remove a git worktree and optionally delete its scratch branch.
+
+    Uses --force so a dirty worktree (with uncommitted candidate changes)
+    still gets removed on the cleanup path. Missing branches during delete
+    are logged at debug level, not raised - the caller has already used
+    the candidate's result.
+
+    Args:
+        repo_path: Path to the main repository that owns the worktree.
+        worktree_path: Absolute path of the worktree to remove.
+        branch_name: If provided, force-delete this branch after removal.
+
+    Returns:
+        Dict with 'status' or 'error'.
+    """
+    try:
+        repo = Repo(repo_path)
+        await asyncio.to_thread(
+            repo.git.worktree, "remove", "--force", worktree_path
+        )
+        if branch_name:
+            try:
+                await asyncio.to_thread(repo.git.branch, "-D", branch_name)
+            except Exception as e:
+                logger.debug(f"[worktree] Branch delete skipped: {e}")
+        logger.info(f"[worktree] Removed {worktree_path}")
+        return {"status": "removed", "path": worktree_path}
+    except Exception as e:
+        return {"error": f"Failed to remove worktree: {e}"}
 
 
 # Tool definitions for LLM function calling

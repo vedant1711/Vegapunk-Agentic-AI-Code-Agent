@@ -1,6 +1,5 @@
 """Tests for the FastAPI API endpoints."""
 
-import pytest
 from fastapi.testclient import TestClient
 
 
@@ -14,7 +13,7 @@ def test_root_endpoint():
 
     assert response.status_code == 200
     data = response.json()
-    assert data["name"] == "Agentic Coder"
+    assert data["name"] == "Vegapunk"
     assert data["version"] == "0.1.0"
     assert "providers" in data
 

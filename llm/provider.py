@@ -6,8 +6,8 @@ import logging
 from enum import Enum
 from typing import Any
 
-from llm.nvidia_nim import nvidia_client
 from llm.gemini import gemini_client
+from llm.nvidia_nim import nvidia_client
 
 logger = logging.getLogger(__name__)
 

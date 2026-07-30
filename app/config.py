@@ -41,9 +41,31 @@ class Settings(BaseSettings):
     sandbox_timeout: int = 300
     sandbox_memory_limit: str = "512m"
     sandbox_cpu_limit: float = 1.0
+    # Allow network egress from inside the sandbox container. Default True
+    # so cloned projects can run `pip install` / `npm install` and their
+    # tests actually work. Flip to False for maximum isolation - but most
+    # real repositories will regress because their deps can't be installed.
+    sandbox_allow_network: bool = True
 
     # --- Workspace ---
     workspace_dir: str = "./workspaces"
+
+    # --- Best-of-N (Coder inference-time compute) ---
+    # K=1 disables Best-of-N (single LLM call, apply to main workspace).
+    # K>=2 generates K candidate diffs in parallel at different temperatures,
+    # applies each to a fresh git worktree, runs tests, and keeps the
+    # candidate with the fewest NEW test failures. Grounded in the DeepSWE
+    # / ACECoder line of work on execution-verified rewards.
+    #
+    # Cost scales linearly with K: default K=3 means 3x LLM calls + 3x test
+    # runs per Coder step. On rate-limited free tiers you may want K=2 or
+    # K=1 to avoid 429s.
+    coder_bon_k: int = 3
+    # Comma-separated temperatures. Padded with the last value if shorter
+    # than K; truncated if longer.
+    coder_bon_temperatures_csv: str = "0.1,0.5,0.9"
+    coder_bon_max_parallel: int = 3
+    coder_bon_timeout_seconds: int = 180
 
     @property
     def workspace_path(self) -> Path:

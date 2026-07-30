@@ -1,9 +1,10 @@
-"""Task API — manual task triggers and status queries."""
+"""Task API - manual task triggers and status queries."""
 
 from __future__ import annotations
 
 import json
 import logging
+import time
 import uuid
 from typing import Any
 
@@ -38,7 +39,13 @@ class TaskFromURL(BaseModel):
 async def _run_task(task_id: str, request: TaskRequest) -> None:
     """Background task to run the agent."""
     _tasks[task_id]["status"] = "running"
-    event_bus.emit(task_id, "System", f"Task {task_id} started for {request.repo_full_name}#{request.issue_number}", "info")
+    started = time.time()
+    event_bus.emit(
+        task_id,
+        "System",
+        f"Task {task_id} started for {request.repo_full_name}#{request.issue_number}",
+        "info",
+    )
 
     try:
         result = await run_agent(
@@ -62,10 +69,20 @@ async def _run_task(task_id: str, request: TaskRequest) -> None:
             },
         })
         pr_url = result.get("pr_url", "")
-        event_bus.emit(task_id, "System", f"🏁 Vegapunk finished — PR: {pr_url}", "success")
+        event_bus.run_end(
+            task_id,
+            f"Run finished. PR: {pr_url}" if pr_url else "Run finished.",
+            level="success",
+            duration_seconds=time.time() - started,
+        )
     except Exception as e:
         _tasks[task_id].update({"status": "failed", "error": str(e)})
-        event_bus.emit(task_id, "System", f"❌ Task failed: {e}", "error")
+        event_bus.run_end(
+            task_id,
+            f"Task failed: {e}",
+            level="error",
+            duration_seconds=time.time() - started,
+        )
         logger.error(f"Task {task_id} failed: {e}", exc_info=True)
 
 
@@ -83,7 +100,7 @@ async def create_task(request: TaskRequest, background_tasks: BackgroundTasks):
     }
 
     background_tasks.add_task(_run_task, task_id, request)
-    logger.info(f"📝 Task {task_id} created for {request.repo_full_name}#{request.issue_number}")
+    logger.info(f"[tasks] Task {task_id} created for {request.repo_full_name}#{request.issue_number}")
 
     return {"task_id": task_id, "status": "queued"}
 
@@ -140,16 +157,19 @@ async def stream_events(task_id: str):
     async def event_generator():
         async for event in event_bus.subscribe(task_id):
             if event.message == "keepalive":
-                yield f": keepalive\n\n"
+                yield ": keepalive\n\n"
                 continue
             data = json.dumps({
                 "timestamp": event.timestamp,
-                "satellite": event.satellite,
+                "step": event.step,
                 "message": event.message,
                 "level": event.level,
+                "event_type": event.event_type,
+                "duration_ms": event.duration_ms,
+                "step_status": event.step_status,
             })
             yield f"data: {data}\n\n"
-            if "finished" in event.message.lower() or event.message.startswith("❌ Task failed"):
+            if event.event_type == "run_end":
                 break
 
     return StreamingResponse(
@@ -167,4 +187,3 @@ async def stream_events(task_id: str):
 async def list_tasks():
     """List all tasks."""
     return {"tasks": list(_tasks.values())}
-

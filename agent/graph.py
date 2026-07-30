@@ -1,45 +1,49 @@
-"""Main LangGraph workflow — the agentic coding agent pipeline."""
+"""Main LangGraph workflow - the coding agent pipeline."""
 
 from __future__ import annotations
 
 import logging
+import time
 from typing import Any
 
 from langgraph.graph import END, StateGraph
 
-from agent.state import AgentState, TaskStatus
-from agent.nodes.router import router_node
-from agent.nodes.planner import planner_node
 from agent.nodes.coder import coder_node
-from agent.nodes.tester import tester_node
-from agent.nodes.reviewer import reviewer_node
+from agent.nodes.planner import planner_node
 from agent.nodes.pr_creator import pr_creator_node
-from tools.git_ops import clone_repo, create_branch
-from tools.github_api import github_api
+from agent.nodes.reviewer import reviewer_node
+from agent.nodes.router import router_node
+from agent.nodes.tester import tester_node
+from agent.state import AgentState, TaskStatus
 from app.events import event_bus
+from tools.git_ops import clone_repo, create_branch
 
 logger = logging.getLogger(__name__)
 
+STEP_NAME = "Setup"
 
-# --- Setup Node (not an LLM agent — just workspace prep) ---
+
+# --- Setup Node (workspace prep, not an LLM step) ---
 
 async def setup_node(state: AgentState) -> dict[str, Any]:
-    """Clone the repo and create a working branch.
+    """Clone the repo, create a working branch, and capture baseline tests.
 
     Reads: repo_full_name, repo_clone_url, issue_number
-    Writes: workspace_path, branch_name
+    Writes: workspace_path, branch_name, baseline_test_failures
     """
     repo_name = state.get("repo_full_name", "")
     clone_url = state.get("repo_clone_url", "")
     issue_num = state.get("issue_number", 0)
-
-    logger.info(f"⚙️ Stella (Setup): Cloning {repo_name}")
     task_id = state.get("task_id", "")
-    event_bus.emit(task_id, "Stella (Setup)", f"Cloning {repo_name}...", "info")
 
-    # Clone the repository
+    started = time.time()
+    logger.info(f"[Setup] Cloning {repo_name}")
+    event_bus.step_start(task_id, STEP_NAME)
+    event_bus.emit(task_id, STEP_NAME, f"Cloning {repo_name}", "info")
+
     clone_result = await clone_repo(clone_url)
     if "error" in clone_result:
+        event_bus.step_end(task_id, STEP_NAME, "error", time.time() - started)
         return {
             "status": TaskStatus.FAILED,
             "error": f"Failed to clone: {clone_result['error']}",
@@ -48,46 +52,76 @@ async def setup_node(state: AgentState) -> dict[str, Any]:
     workspace = clone_result["path"]
     branch_name = f"agent/fix-issue-{issue_num}"
 
-    # Create working branch
     branch_result = await create_branch(workspace, branch_name)
     if "error" in branch_result:
-        # Branch might already exist — try checkout
+        # Branch may already exist - try to checkout
         from git import Repo
         try:
             repo = Repo(workspace)
             repo.git.checkout(branch_name)
         except Exception:
+            event_bus.step_end(task_id, STEP_NAME, "error", time.time() - started)
             return {
                 "status": TaskStatus.FAILED,
                 "error": f"Failed to create branch: {branch_result['error']}",
             }
 
-    logger.info(f"⚙️ Stella (Setup): Ready at {workspace} on branch {branch_name}")
-    event_bus.emit(task_id, "Stella (Setup)", f"Ready on branch {branch_name}", "success")
+    logger.info(f"[Setup] Ready at {workspace} on branch {branch_name}")
+    event_bus.emit(task_id, STEP_NAME, f"Ready on branch {branch_name}", "success")
 
-    # Run baseline tests BEFORE changes to capture pre-existing failures
-    from tools.test_runner import run_tests
+    # Capture baseline test failures so downstream steps can distinguish
+    # pre-existing failures from ones introduced by our changes.
     import re as _re
 
-    baseline_failures = []
+    from tools.test_runner import run_tests
+
+    baseline_failures: list[str] = []
     try:
         baseline = await run_tests(workspace)
         output = baseline.get("output", "")
-        # Extract failed test names from pytest output
         for line in output.splitlines():
             if "FAILED" in line:
-                # Matches patterns like "tests/test_file.py::test_name FAILED"
                 match = _re.match(r"^([\w/\.\:]+)\s+FAILED", line.strip())
                 if match:
                     baseline_failures.append(match.group(1))
         if baseline_failures:
-            logger.info(f"⚙️ Stella (Setup): Baseline has {len(baseline_failures)} pre-existing failures: {baseline_failures}")
-            event_bus.emit(task_id, "Stella (Setup)", f"Baseline: {len(baseline_failures)} pre-existing failures captured", "warning")
+            logger.info(
+                f"[Setup] Baseline has {len(baseline_failures)} pre-existing failures: {baseline_failures}"
+            )
+            event_bus.emit(
+                task_id,
+                STEP_NAME,
+                f"Baseline: {len(baseline_failures)} pre-existing failures captured",
+                "warning",
+            )
         else:
-            logger.info("⚙️ Stella (Setup): Baseline — all tests pass")
-            event_bus.emit(task_id, "Stella (Setup)", "Baseline: all tests pass ✅", "success")
+            logger.info("[Setup] Baseline: all tests pass")
+            event_bus.emit(task_id, STEP_NAME, "Baseline: all tests pass", "success")
     except Exception as e:
-        logger.warning(f"⚙️ Stella (Setup): Baseline test run failed: {e}")
+        logger.warning(f"[Setup] Baseline test run failed: {e}")
+
+    # Build the tree-sitter repo graph now so downstream steps see it warm.
+    # Best-effort: if the build fails for any reason the planner falls back
+    # to legacy regex retrieval.
+    try:
+        event_bus.emit(task_id, STEP_NAME, "Indexing repository (tree-sitter)...", "info")
+        from tools.repo_graph import get_or_build_graph
+        graph = await get_or_build_graph(workspace)
+        gs = graph.stats
+        event_bus.emit(
+            task_id,
+            STEP_NAME,
+            (
+                f"Indexed: {gs.files_parsed} files, {gs.symbols} symbols, "
+                f"{gs.references} refs, {gs.edges} edges, {gs.wall_time_ms:.0f}ms"
+            ),
+            "success" if gs.files_parsed > 0 else "warning",
+        )
+    except Exception as e:
+        logger.warning(f"[Setup] Graph indexing failed: {e}")
+        event_bus.emit(task_id, STEP_NAME, f"Graph indexing failed: {e}", "warning")
+
+    event_bus.step_end(task_id, STEP_NAME, "success", time.time() - started)
 
     return {
         "workspace_path": workspace,
@@ -121,19 +155,18 @@ def create_agent_graph() -> StateGraph:
     """Create the LangGraph StateGraph for the coding agent workflow.
 
     Flow:
-    setup → router → planner → coder → tester
-                                  ↑        ↓
-                                  └─[retry]─┘
-                                         ↓ [pass]
-                                      reviewer
-                                  ↑        ↓
-                                  └─[revise]┘
-                                         ↓ [approve]
-                                     pr_creator → END
+        setup -> router -> planner -> coder -> tester
+                                          ^      |
+                                          +-[retry]-+
+                                                 | [pass]
+                                              reviewer
+                                          ^      |
+                                          +-[revise]-+
+                                                 | [approve]
+                                             pr_creator -> END
     """
     graph = StateGraph(AgentState)
 
-    # Add nodes
     graph.add_node("setup", setup_node)
     graph.add_node("router", router_node)
     graph.add_node("planner", planner_node)
@@ -142,14 +175,12 @@ def create_agent_graph() -> StateGraph:
     graph.add_node("reviewer", reviewer_node)
     graph.add_node("pr_creator", pr_creator_node)
 
-    # Define edges
     graph.set_entry_point("setup")
     graph.add_edge("setup", "router")
     graph.add_edge("router", "planner")
     graph.add_edge("planner", "coder")
     graph.add_edge("coder", "tester")
 
-    # Conditional: after tester → retry coder or go to reviewer
     graph.add_conditional_edges(
         "tester",
         should_retry_coding,
@@ -160,7 +191,6 @@ def create_agent_graph() -> StateGraph:
         },
     )
 
-    # Conditional: after reviewer → revise code or create PR
     graph.add_conditional_edges(
         "reviewer",
         should_revise_after_review,
@@ -175,7 +205,6 @@ def create_agent_graph() -> StateGraph:
     return graph
 
 
-# Compile the graph
 agent_graph = create_agent_graph().compile()
 
 
@@ -226,6 +255,7 @@ async def run_agent(
         "status": TaskStatus.PENDING,
         "current_step": "Starting agent pipeline",
         "retry_count": 0,
+        "review_retry_count": 0,
         "max_retries": 3,
         "error": "",
         "messages": [],
@@ -233,12 +263,12 @@ async def run_agent(
         "task_id": task_id,
     }
 
-    logger.info(f"🏴\u200d☠️ Vegapunk starting agent for {repo_full_name}#{issue_number}: {issue_title}")
+    logger.info(f"[run] Starting agent for {repo_full_name}#{issue_number}: {issue_title}")
 
     final_state = await agent_graph.ainvoke(initial_state)
 
     logger.info(
-        f"🏁 Vegapunk finished: status={final_state.get('status')}, "
+        f"[run] Finished: status={final_state.get('status')}, "
         f"pr_url={final_state.get('pr_url', 'N/A')}"
     )
 

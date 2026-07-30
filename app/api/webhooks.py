@@ -8,10 +8,10 @@ import json
 import logging
 from typing import Any
 
-from fastapi import APIRouter, Request, HTTPException, BackgroundTasks
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 
-from app.config import settings
 from agent.graph import run_agent
+from app.config import settings
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/webhooks", tags=["webhooks"])
@@ -70,12 +70,12 @@ async def github_webhook(request: Request, background_tasks: BackgroundTasks):
     event = request.headers.get("X-GitHub-Event", "")
     data = json.loads(payload)
 
-    logger.info(f"🔔 Webhook received: event={event}, action={data.get('action', '?')}")
+    logger.info(f"[webhook] Received: event={event}, action={data.get('action', '?')}")
 
     # Handle issue events
     if event == "issues" and data.get("action") in ("opened", "labeled"):
         issue = data.get("issue", {})
-        labels = [l.get("name", "") for l in issue.get("labels", [])]
+        labels = [label.get("name", "") for label in issue.get("labels", [])]
 
         # Only auto-trigger for issues with "agent" label, or if configured to trigger on all
         if "agent" in labels or data.get("action") == "opened":

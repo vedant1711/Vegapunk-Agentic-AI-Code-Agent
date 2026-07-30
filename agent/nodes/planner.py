@@ -1,29 +1,31 @@
-"""Edison (Planner) node — analyzes the issue and creates an implementation plan."""
+"""Planner node - analyzes the issue and creates an implementation plan."""
 
 from __future__ import annotations
 
 import logging
+import time
 from typing import Any
 
 from agent.state import AgentState, TaskStatus
-from llm.provider import llm, ModelTier
-from tools.code_search import get_file_structure, find_relevant_files
-from tools.github_api import github_api
 from app.events import event_bus
+from llm.provider import ModelTier, llm
+from tools.code_search import find_relevant_files, get_file_structure
 
 logger = logging.getLogger(__name__)
+
+STEP_NAME = "Planner"
 
 PLANNER_SYSTEM_PROMPT = """You are a senior software engineer planning the implementation for a GitHub issue. You have access to the repository structure and can search for relevant code.
 
 Your job is to create a clear, actionable implementation plan that a coder agent can follow.
 
 Your plan should include:
-1. **Analysis** — What the issue is asking for, root cause (for bugs), or scope (for features)
-2. **Files to modify** — List specific files that need changes
-3. **Changes per file** — Describe exactly what needs to change in each file
-4. **New files** — Any new files that need to be created
-5. **Testing approach** — How to verify the changes work
-6. **Potential risks** — Edge cases or things that could go wrong
+1. **Analysis** - What the issue is asking for, root cause (for bugs), or scope (for features)
+2. **Files to modify** - List specific files that need changes
+3. **Changes per file** - Describe exactly what needs to change in each file
+4. **New files** - Any new files that need to be created
+5. **Testing approach** - How to verify the changes work
+6. **Potential risks** - Edge cases or things that could go wrong
 
 Be specific and precise. Reference actual file paths, function names, and line numbers where possible.
 Format your plan in markdown."""
@@ -37,33 +39,56 @@ async def planner_node(state: AgentState) -> dict[str, Any]:
     """
     workspace = state.get("workspace_path", "")
     task_id = state.get("task_id", "")
-    logger.info(f"💡 Edison (Planner): Starting analysis for {state.get('issue_title', '?')}")
-    event_bus.emit(task_id, "Edison (Planner)", f"Analyzing: {state.get('issue_title', '?')}", "info")
+    started = time.time()
 
-    # Step 1: Get repository structure
+    logger.info(f"[Planner] Starting analysis for {state.get('issue_title', '?')}")
+    event_bus.step_start(task_id, STEP_NAME)
+    event_bus.emit(task_id, STEP_NAME, f"Analyzing: {state.get('issue_title', '?')}", "info")
+
+    # Step 1: Get repository structure (used for the tree overview)
     structure = await get_file_structure(workspace)
     tree = structure.get("tree", "Unable to read structure")
 
-    # Step 2: Search for relevant files based on issue keywords
-    keywords = _extract_keywords(state.get("issue_title", ""), state.get("issue_body", ""))
-    relevant_files = []
-    for keyword in keywords[:5]:  # Search top 5 keywords
-        results = await find_relevant_files(workspace, keyword)
-        if "files" in results:
-            relevant_files.extend(results["files"])
+    # Step 2: Rank relevant files. Prefer the tree-sitter repo graph
+    # (tools/repo_graph.py) - it combines keyword overlap with PageRank on
+    # the file-level reference graph. Fall back to the legacy regex-based
+    # find_relevant_files if the graph didn't build for any reason
+    # (unsupported language, empty workspace, grammar ABI mismatch, etc.).
+    relevant_context = ""
+    query = f"{state.get('issue_title', '')} {state.get('issue_body', '')}"
+    try:
+        from tools.repo_graph import get_or_build_graph
+        graph = await get_or_build_graph(workspace)
+        if graph.stats.files_parsed > 0:
+            matches = graph.relevant_files_for(query, limit=15)
+            relevant_context = "\n".join(
+                (
+                    f"- `{m.path}` (score={m.combined_score:.2f}"
+                    + (f"; symbols: {', '.join(m.matched_symbols[:3])}" if m.matched_symbols else "")
+                    + ")"
+                )
+                for m in matches
+            )
+    except Exception as e:
+        logger.warning(f"[Planner] Graph retrieval failed, falling back to legacy: {e}")
 
-    # Deduplicate
-    seen_paths = set()
-    unique_files = []
-    for f in relevant_files:
-        if f["path"] not in seen_paths:
-            seen_paths.add(f["path"])
-            unique_files.append(f)
-
-    relevant_context = "\n".join(
-        f"- `{f['path']}` ({f['match_count']} matches)"
-        for f in unique_files[:15]
-    )
+    if not relevant_context:
+        keywords = _extract_keywords(state.get("issue_title", ""), state.get("issue_body", ""))
+        legacy_files: list[dict[str, Any]] = []
+        for keyword in keywords[:5]:
+            results = await find_relevant_files(workspace, keyword)
+            if "files" in results:
+                legacy_files.extend(results["files"])
+        seen_paths: set[str] = set()
+        unique_files: list[dict[str, Any]] = []
+        for f in legacy_files:
+            if f["path"] not in seen_paths:
+                seen_paths.add(f["path"])
+                unique_files.append(f)
+        relevant_context = "\n".join(
+            f"- `{f['path']}` ({f['match_count']} matches)"
+            for f in unique_files[:15]
+        )
 
     # Step 3: Ask the LLM to create the plan
     messages = [
@@ -86,7 +111,7 @@ async def planner_node(state: AgentState) -> dict[str, Any]:
 ```
 
 **Relevant Files Found:**
-{relevant_context or 'No specific files found — search the codebase for more context.'}
+{relevant_context or 'No specific files found - search the codebase for more context.'}
 
 ---
 
@@ -96,13 +121,14 @@ Create a detailed implementation plan.""",
 
     plan = await llm.chat(messages=messages, tier=ModelTier.HEAVY, temperature=0.2, max_tokens=4096)
 
-    logger.info(f"💡 Edison (Planner): Plan created ({len(plan)} chars)")
-    event_bus.emit(task_id, "Edison (Planner)", f"Plan created ({len(plan)} chars)", "success")
+    logger.info(f"[Planner] Plan created ({len(plan)} chars)")
+    event_bus.emit(task_id, STEP_NAME, f"Plan created ({len(plan)} chars)", "success")
+    event_bus.step_end(task_id, STEP_NAME, "success", time.time() - started)
 
     return {
         "implementation_plan": plan,
         "status": TaskStatus.CODING,
-        "current_step": "Plan created — starting code implementation",
+        "current_step": "Plan created - starting code implementation",
         "messages": [{"role": "assistant", "content": f"Implementation plan:\n{plan}"}],
     }
 
@@ -132,8 +158,8 @@ def _extract_keywords(title: str, body: str) -> list[str]:
     keywords = code_refs + [w for w in words if w.lower() not in stop_words]
 
     # Deduplicate while preserving order
-    seen = set()
-    unique = []
+    seen: set[str] = set()
+    unique: list[str] = []
     for kw in keywords:
         lower = kw.lower()
         if lower not in seen:

@@ -1,293 +1,96 @@
-# 🏴‍☠️ Vegapunk — Autonomous AI Coding Agent
+# Vegapunk — Autonomous Coding Agent
 
-> *"A man's dream will never die!"* — Dr. Vegapunk would agree, especially about autonomous coding.
-
-**Vegapunk** is a fully autonomous AI coding agent that resolves GitHub issues end-to-end — analyzing code, planning fixes, writing changes, running tests, reviewing quality, and creating pull requests. Powered by **7 Satellite Agents** inspired by One Piece's Dr. Vegapunk, with a real-time visualization dashboard.
-
----
-
-## 🎬 Demo
-
-<p align="center">
-  <img src="docs/images/vegapunk-demo.webp" alt="Vegapunk Demo — Real-time satellite processing" width="100%"/>
-</p>
-
-> ☝️ Watch Vegapunk solve a real GitHub issue in ~60 seconds — from issue classification to PR creation, with all 7 satellites working in sequence.
+Vegapunk takes a GitHub issue URL and produces a pull request. Given an
+issue, it clones the repository, classifies the issue, plans an
+implementation, writes the code, runs the tests, self-reviews the diff,
+and opens a PR — with a live trace UI showing every step.
 
 ---
 
-## 📸 Dashboard UI
+## Pipeline
 
-### Idle State — Dashboard Ready
-<p align="center">
-  <img src="docs/images/dashboard-idle.png" alt="Vegapunk Dashboard — Idle State" width="100%"/>
-</p>
+| # | Step        | Responsibility                                                                                                                                    |
+|---|-------------|---------------------------------------------------------------------------------------------------------------------------------------------------|
+| 1 | Setup       | Clone the repository, create a working branch, and capture the baseline test-failure set so pre-existing failures aren't blamed on the agent.     |
+| 2 | Router      | Classify the issue as one of `bug_fix / feature / refactor / docs / test / chore`.                                                                |
+| 3 | Planner     | Walk the repo tree, find relevant files, and produce a markdown implementation plan.                                                              |
+| 4 | Coder       | Apply the changes. Hybrid rewrite / line-edit strategy — rewrites small files, does precise line-range edits on larger ones.                      |
+| 5 | Tester      | Run the project's tests and linter. Compares failures against the baseline — only **new** failures trigger a retry back to the Coder.             |
+| 6 | Reviewer    | Read the diff and self-review for correctness, quality, and security. Can send the run back to the Coder for revisions (bounded).                 |
+| 7 | PR Creator  | Commit, push, detect the repository's default branch, and open the pull request.                                                                  |
 
-### Active Processing — Satellites at Work
-<p align="center">
-  <img src="docs/images/dashboard-active.png" alt="Vegapunk Dashboard — Active Processing" width="100%"/>
-</p>
-
-> Shaka (Router) glows **cyan** as it classifies the issue. Stella is already **done** (green). The Live Activity panel shows events streaming in real-time.
-
-### Completed — PR Created
-<p align="center">
-  <img src="docs/images/dashboard-completed.png" alt="Vegapunk Dashboard — Task Completed" width="100%"/>
-</p>
-
-> All 7 satellites show **DONE** with green badges. The **"✅ View PR →"** button appears in the header. 19 events logged in the live activity feed.
+Both retry loops (Tester → Coder on new test failures, Reviewer → Coder on
+rejection) are capped at `max_retries` (default 3) to prevent unbounded
+spins.
 
 ---
 
-## 🧬 The Seven Satellites
+## Architecture
 
-Each agent node maps to one of Dr. Vegapunk's satellite bodies from One Piece:
+```
++---------------------------+           +-----------------------------+
+| Next.js frontend (:3000)  |           | FastAPI backend (:8000)     |
+|                           |           |                             |
+| - task form               |  POST /api/tasks/from-url               |
+| - run header (progress)   +---------->+                             |
+| - step cards (trace)      |           |  agent/graph.py             |
+|                           |           |  = LangGraph pipeline       |
+|                           |  GET /api/tasks/{id}/events (SSE)       |
+|                           +<----------+                             |
++---------------------------+           |                             |
+                                        |  llm/provider.py            |
+                                        |  NVIDIA NIM -> Gemini       |
+                                        |                             |
+                                        |  tools/                     |
+                                        |  git_ops, github_api,       |
+                                        |  filesystem, test_runner,   |
+                                        |  code_search, sandbox       |
+                                        +-----------------------------+
+```
 
-| # | Satellite | Role | Personality | What It Does |
-|---|---|---|---|---|
-| 00 | ⚙️ **Stella** | Setup | The Original | Clones repos, creates branches, captures baseline test state |
-| 01 | 🧠 **Shaka** | Router | The Good | Classifies issues — `bug_fix`, `feature`, `refactor`, `docs`, `test` |
-| 03 | 💡 **Edison** | Planner | The Thinker | Analyzes codebase structure and generates implementation plans |
-| 04 | 💻 **Pythagoras** | Coder | The Wise | Writes code using a hybrid file/line-edit strategy |
-| 05 | 🔨 **Atlas** | Tester | The Violent | Runs tests with baseline comparison — ignores pre-existing failures |
-| 02 | 😈 **Lilith** | Reviewer | The Evil | Self-reviews diffs for correctness, security, and code quality |
-| 06 | 🎯 **York** | PR Creator | The Greedy | Commits, pushes, and creates pull requests on GitHub |
+The pipeline is a LangGraph `StateGraph` with conditional edges for the
+Coder/Tester retry loop and the Reviewer/Coder revision loop.
+
+Every node emits structured events to an in-memory event bus
+(`app/events.py`) — `step_start`, `step_end` (with duration and status),
+and per-step log lines. The `/api/tasks/{id}/events` endpoint streams
+those over Server-Sent Events. The frontend renders them as a trace
+timeline with collapsible per-step cards.
 
 ---
 
-## 🏗️ Architecture
-
-### High-Level Overview
-
-```
-┌──────────────────────────────────────────────────────────────────┐
-│                        Frontend (Next.js :3000)                  │
-│  ┌─────────┐  ┌──────────────┐  ┌────────────┐  ┌───────────┐  │
-│  │Task Form│  │Pipeline Flow │  │ Agent Cards │  │Log Stream │  │
-│  │(Submit) │  │(7-node chain)│  │(7 satellites│  │(SSE live) │  │
-│  └────┬────┘  └──────────────┘  └────────────┘  └─────▲─────┘  │
-│       │                                                │        │
-└───────┼────────────────────────────────────────────────┼────────┘
-        │ POST /api/tasks/from-url                       │ GET /api/tasks/{id}/events (SSE)
-        ▼                                                │
-┌───────────────────────────────────────────────────────────────────┐
-│                      Backend (FastAPI :8000)                       │
-│                                                                   │
-│  ┌───────────┐    ┌──────────────────────────────────────────┐   │
-│  │ Tasks API │───▶│           LangGraph Pipeline             │   │
-│  │ (REST+SSE)│    │                                          │   │
-│  └───────────┘    │  Stella → Shaka → Edison → Pythagoras    │   │
-│                   │                      │                   │   │
-│  ┌───────────┐    │             Atlas ◄──┘                   │   │
-│  │ Event Bus │◄───│               │                          │   │
-│  │ (in-mem)  │    │           Lilith → York → PR ✅          │   │
-│  └───────────┘    └──────────────────────────────────────────┘   │
-│                                                                   │
-│  ┌─────────────────────────────────────────────────────────────┐ │
-│  │                       Tools Layer                           │ │
-│  │  git_ops │ github_api │ filesystem │ test_runner │ sandbox  │ │
-│  └─────────────────────────────────────────────────────────────┘ │
-│                                                                   │
-│  ┌─────────────────────────────────────────────────────────────┐ │
-│  │                      LLM Provider                           │ │
-│  │             NVIDIA NIM (primary) │ Gemini (fallback)        │ │
-│  └─────────────────────────────────────────────────────────────┘ │
-└───────────────────────────────────────────────────────────────────┘
-```
-
-### Pipeline Flow
-
-```
-Issue URL submitted
-        │
-        ▼
-   ┌─────────┐
-   │  Stella  │  Clone repo, create branch, run baseline tests
-   │ (Setup)  │  Captures pre-existing test failures
-   └────┬─────┘
-        ▼
-   ┌─────────┐
-   │  Shaka   │  Classify issue type using LLM
-   │ (Router) │  Output: bug_fix | feature | refactor | docs | test
-   └────┬─────┘
-        ▼
-   ┌─────────┐
-   │  Edison  │  Analyze codebase structure (file tree, relevant files)
-   │(Planner) │  Generate detailed implementation plan via LLM
-   └────┬─────┘
-        ▼
-   ┌──────────┐
-   │Pythagoras│  Read relevant source files with line numbers
-   │ (Coder)  │  Generate code changes via LLM — uses line_edit for precision
-   └────┬─────┘  Supports up to 3 retries on failure
-        │
-        ▼
-   ┌─────────┐
-   │  Atlas   │  Run linter (if configured) + pytest
-   │ (Tester) │  Compare failures against baseline — ignore pre-existing bugs
-   └────┬─────┘  If NEW failures → retry loop back to Pythagoras
-        │
-        ▼
-   ┌─────────┐
-   │  Lilith  │  Self-review: analyze diff for correctness & security
-   │(Reviewer)│  If rejected → retry loop back to Pythagoras
-   └────┬─────┘
-        │
-        ▼
-   ┌─────────┐
-   │  York    │  git commit → git push → create GitHub PR
-   │(PR Maker)│  Posts comment on original issue with link to PR
-   └─────────┘
-        │
-        ▼
-   ✅ Pull Request Created
-```
-
-### Retry Logic
-
-Vegapunk includes intelligent retry loops:
-
-```
-Pythagoras (Coder) ──▶ Atlas (Tester) ──▶ Lilith (Reviewer) ──▶ York (PR)
-       ▲                     │                    │
-       │      test failure   │    review reject   │
-       └─────────────────────┘────────────────────┘
-                     (max 3 retries)
-```
-
-If Atlas detects **new** test failures or Lilith rejects the code, the pipeline loops back to Pythagoras with the error context, allowing the agent to self-correct.
-
----
-
-### Real-Time Event System
-
-Vegapunk uses **Server-Sent Events (SSE)** for real-time frontend updates:
-
-```
-Backend Nodes            Event Bus              Frontend
-┌──────────┐         ┌──────────────┐        ┌──────────────┐
-│ Shaka    │──emit──▶│              │──SSE──▶│ EventSource  │
-│ Edison   │──emit──▶│  event_bus   │        │   ▼          │
-│ Pythagoras──emit──▶│  (in-memory) │        │ Log Stream   │
-│ Atlas    │──emit──▶│              │        │ Agent Cards  │
-│ Lilith   │──emit──▶│  subscribe() │        │ Pipeline Flow│
-│ York     │──emit──▶│              │        └──────────────┘
-└──────────┘         └──────────────┘
-```
-
-**Endpoint:** `GET /api/tasks/{task_id}/events`  
-**Format:** JSON events streamed via SSE  
-**Features:** Event history replay for late-connecting clients, automatic keepalive, graceful completion detection.
-
----
-
-## 📁 Project Structure
-
-```
-vegapunk/
-├── agent/                    # LangGraph agent pipeline
-│   ├── graph.py              # Main workflow — compiles & runs the pipeline
-│   ├── state.py              # AgentState TypedDict — shared state across nodes
-│   └── nodes/
-│       ├── router.py         # 🧠 Shaka — issue classification
-│       ├── planner.py        # 💡 Edison — implementation planning
-│       ├── coder.py          # 💻 Pythagoras — code generation
-│       ├── tester.py         # 🔨 Atlas — test execution & baseline comparison
-│       ├── reviewer.py       # 😈 Lilith — self-review
-│       └── pr_creator.py     # 🎯 York — git push & PR creation
-│
-├── app/                      # FastAPI backend
-│   ├── main.py               # App entry point, CORS, lifespan
-│   ├── config.py             # Settings from environment variables
-│   ├── events.py             # Event bus for SSE streaming
-│   └── api/
-│       ├── tasks.py          # REST + SSE endpoints for tasks
-│       └── webhooks.py       # GitHub webhook handler
-│
-├── llm/                      # LLM provider abstraction
-│   ├── provider.py           # Unified interface with model tiers
-│   ├── nvidia_nim.py         # NVIDIA NIM API client
-│   └── gemini.py             # Google Gemini API client
-│
-├── tools/                    # External tool integrations
-│   ├── git_ops.py            # Clone, branch, commit, push via GitPython
-│   ├── github_api.py         # GitHub API via PyGithub (issues, PRs, comments)
-│   ├── filesystem.py         # Read/write files, line-edit operations
-│   ├── test_runner.py        # pytest runner + linter detection
-│   ├── code_search.py        # File structure analysis & relevant file search
-│   └── sandbox.py            # Docker sandbox for safe command execution
-│
-├── frontend/                 # Next.js real-time dashboard
-│   ├── src/
-│   │   ├── app/
-│   │   │   ├── page.tsx      # Main dashboard — SSE consumer
-│   │   │   ├── layout.tsx    # Root layout with Inter font
-│   │   │   └── globals.css   # Dark One Piece theme
-│   │   ├── components/
-│   │   │   ├── agent-card.tsx    # Satellite agent card with glow animations
-│   │   │   ├── pipeline-flow.tsx # Pipeline node chain visualization
-│   │   │   ├── log-stream.tsx    # Real-time log viewer (monospace, colored)
-│   │   │   └── task-form.tsx     # Issue URL input + submit button
-│   │   └── lib/
-│   │       └── types.ts      # Satellite definitions, types, log mapping
-│   └── package.json
-│
-├── docs/images/              # Screenshots & demo recordings
-├── pyproject.toml            # Python project config & dependencies
-├── Dockerfile                # Backend container
-├── docker-compose.yml        # Multi-service deployment
-└── .env.example              # Environment variable template
-```
-
----
-
-## 🚀 Quick Start
+## Quickstart
 
 ### Prerequisites
 - Python 3.11+
-- Node.js 18+ (for frontend)
-- At least one LLM API key (NVIDIA NIM or Google Gemini)
-- GitHub Personal Access Token
+- Node.js 18+
+- One LLM API key: NVIDIA NIM or Google Gemini
+- A GitHub Personal Access Token with `repo` scope
 
-### 1. Backend Setup
+### Backend
 
 ```bash
-# Clone the repository
-git clone <your-repo-url>
-cd vegapunk
-
-# Create virtual environment
 python -m venv .venv && source .venv/bin/activate
-
-# Install dependencies
 pip install -e ".[dev]"
 
-# Configure environment
 cp .env.example .env
-# Edit .env with your API keys (see table below)
+# edit .env with your API keys
 
-# Start the backend
-uvicorn app.main:app --port 8000
+uvicorn app.main:app --port 8000 --reload --reload-exclude 'workspaces/*'
 ```
 
-### 2. Frontend Setup
+### Frontend
 
 ```bash
-# In a new terminal
 cd frontend
 npm install
 npm run dev -- --port 3000
 ```
 
-### 3. Submit an Issue
+Open http://localhost:3000, paste a GitHub issue URL, and hit **Run agent**.
 
-**Option A — Via the Dashboard UI:**
-1. Open http://localhost:3000
-2. Paste a GitHub issue URL (e.g. `https://github.com/owner/repo/issues/1`)
-3. Click **"Deploy Satellites 🚀"**
-4. Watch all 7 satellites work in real-time!
+### Programmatic
 
-**Option B — Via curl:**
 ```bash
 curl -X POST http://localhost:8000/api/tasks/from-url \
   -H "Content-Type: application/json" \
@@ -296,66 +99,107 @@ curl -X POST http://localhost:8000/api/tasks/from-url \
 
 ---
 
-## ⚙️ Environment Variables
+## Environment variables
 
-| Variable | Description | Required |
-|---|---|---|
-| `NVIDIA_API_KEY` | NVIDIA NIM API key (primary LLM) | Yes (or Gemini) |
-| `GEMINI_API_KEY` | Google Gemini API key (fallback LLM) | Yes (or NVIDIA) |
-| `GITHUB_TOKEN` | GitHub PAT with `repo` scope | Yes |
-| `GITHUB_WEBHOOK_SECRET` | For receiving GitHub webhook events | No |
+| Variable                 | Purpose                                                      | Required           |
+|--------------------------|--------------------------------------------------------------|--------------------|
+| `NVIDIA_API_KEY`         | NVIDIA NIM API key (primary LLM)                             | one of these two   |
+| `GEMINI_API_KEY`         | Google Gemini API key (fallback LLM)                         | one of these two   |
+| `GITHUB_TOKEN`           | GitHub PAT with `repo` scope                                 | yes                |
+| `GITHUB_WEBHOOK_SECRET`  | HMAC-SHA256 secret for `/api/webhooks/github`                | optional           |
 
----
-
-## 🛠️ Tech Stack
-
-### Backend
-| Component | Technology |
-|---|---|
-| **Framework** | FastAPI (async, CORS, SSE) |
-| **Agent Pipeline** | LangGraph (StateGraph with conditional edges) |
-| **LLM Providers** | NVIDIA NIM (Qwen, Nemotron) + Google Gemini |
-| **Git Operations** | GitPython |
-| **GitHub API** | PyGithub |
-| **Sandboxing** | Docker (with local fallback) |
-| **Real-Time Events** | Server-Sent Events (SSE) via async generators |
-
-### Frontend
-| Component | Technology |
-|---|---|
-| **Framework** | Next.js 16 (App Router, TypeScript) |
-| **Styling** | Tailwind CSS |
-| **Animations** | Framer Motion |
-| **Real-Time** | EventSource API (SSE consumer) |
+See `.env.example` for the full list including sandbox and workspace settings.
 
 ---
 
-## 🔑 Key Features
+## Tech stack
 
-### 🎯 Baseline Test Comparison
-Atlas (Tester) captures test failures **before** any code changes, then compares post-change failures against this baseline. Pre-existing failures are correctly ignored — only **new** failures trigger retries.
+**Backend**
+- FastAPI (async, CORS, SSE)
+- LangGraph — `StateGraph` with conditional edges for retry loops
+- LLM providers: NVIDIA NIM (Qwen / Nemotron) primary, Google Gemini fallback
+- GitPython + PyGithub
+- Docker sandbox with a local-execution fallback for development
 
-### ✏️ Hybrid Line-Edit Strategy
-Pythagoras (Coder) uses a line-edit approach that replaces specific line ranges rather than rewriting entire files, making it safe and precise for large codebases.
-
-### 🔄 Self-Correcting Pipeline
-If tests fail or code review is rejected, the pipeline loops back to Pythagoras with error context, allowing up to 3 retry attempts for self-correction.
-
-### 📡 Real-Time Visualization
-Every satellite emits events to an in-memory event bus. The frontend connects via SSE and updates the live activity log, pipeline flow, and agent cards in real-time.
-
-### 🐳 Docker Sandbox
-Commands execute inside a Docker container for safety. Falls back to local execution when Docker isn't available (development mode).
+**Frontend**
+- Next.js 16 (App Router, React 19)
+- Tailwind CSS
+- Native `EventSource` API for the SSE consumer
 
 ---
 
-## 📜 License
+## Project layout
+
+```
+vegapunk/
+  agent/
+    graph.py           LangGraph pipeline; setup_node lives here
+    state.py           AgentState TypedDict
+    nodes/
+      router.py        classify the issue
+      planner.py       generate implementation plan
+      coder.py         apply file changes (rewrite / line_edit / edit / delete)
+      tester.py        run tests + linter, compare against baseline
+      reviewer.py      self-review the diff
+      pr_creator.py    commit, push, open PR
+  app/
+    main.py            FastAPI entry point
+    config.py          Pydantic settings
+    events.py          in-memory event bus + SSE-friendly AgentEvent
+    api/
+      tasks.py         REST + SSE endpoints
+      webhooks.py      GitHub webhook handler
+  llm/
+    provider.py        NIM -> Gemini fallback, ModelTier
+    nvidia_nim.py      OpenAI-compatible client
+    gemini.py          Google generative AI client
+  tools/
+    git_ops.py         clone, branch, commit, push, diff
+    github_api.py      issues, PRs, comments via PyGithub
+    filesystem.py      read / write / apply_edit
+    test_runner.py     pytest / npm / go auto-detect + linter
+    code_search.py     repo tree + text search
+    sandbox.py         Docker sandbox with local fallback
+  frontend/
+    src/
+      app/             page.tsx (trace view), layout.tsx, globals.css
+      components/      task-form, run-header, step-card
+      lib/types.ts     shared types + STEP_DEFS
+  tests/
+```
+
+---
+
+## Known limitations and follow-ups
+
+Roughly ranked by impact:
+
+1. **Task and event persistence.** Both the task list and the event-bus
+   history live in memory. They vanish on server restart. `aiosqlite`
+   is already declared in `pyproject.toml` for exactly this migration.
+2. **Sandbox network isolation** (`network_mode="none"`) breaks
+   repositories whose tests need to `pip install` or `npm install` at
+   runtime. Trade-off is documented in `tools/sandbox.py`.
+3. **No repo-size cap.** A user pasting a huge repo URL will make the
+   Setup step chew disk and time. A shallow clone (`--depth 1`) plus a
+   repo-size limit is a small, high-value addition.
+4. **Regex-based code retrieval.** `tools/code_search.py` and
+   `agent/nodes/coder.py::_read_relevant_files` pick files by regex
+   scanning. Tree-sitter + PageRank-style repo-mapping (as popularized
+   by Aider) is meaningfully better for large repos and is a natural
+   next upgrade.
+5. **No API auth.** Anyone reaching the backend can trigger runs that
+   spend LLM credits and push commits with the configured GitHub token.
+6. **No token / cost metrics per step.** The trace UI shows durations
+   but the LLM provider layer doesn't yet thread usage counts back into
+   the event bus.
+7. **Test isolation.** `tests/test_api.py::test_webhook_with_invalid_payload`
+   reads the real `.env`, so it flips to 401 whenever
+   `GITHUB_WEBHOOK_SECRET` is set locally. Test fixtures should stub
+   settings.
+
+---
+
+## License
 
 MIT
-
----
-
-<p align="center">
-  <strong>Built with 🏴‍☠️ by Vegapunk's Satellites</strong><br/>
-  <em>Powered by NVIDIA NIM • Google Gemini • LangGraph • Next.js</em>
-</p>

@@ -1,16 +1,19 @@
-"""Shaka (Router) node — classifies the task and decides the approach."""
+"""Router node - classifies the issue and decides the approach."""
 
 from __future__ import annotations
 
 import json
 import logging
+import time
 from typing import Any
 
 from agent.state import AgentState, TaskStatus
-from llm.provider import llm, ModelTier
 from app.events import event_bus
+from llm.provider import ModelTier, llm
 
 logger = logging.getLogger(__name__)
+
+STEP_NAME = "Router"
 
 ROUTER_SYSTEM_PROMPT = """You are a task classifier for an AI coding agent. Given a GitHub issue, classify it into exactly one category and provide a brief analysis.
 
@@ -37,9 +40,12 @@ async def router_node(state: AgentState) -> dict[str, Any]:
     Reads: issue_title, issue_body, issue_labels
     Writes: task_classification, status, current_step
     """
-    logger.info(f"🧠 Shaka (Router): Classifying issue #{state.get('issue_number', '?')}")
     task_id = state.get("task_id", "")
-    event_bus.emit(task_id, "Shaka (Router)", f"Classifying issue #{state.get('issue_number', '?')}...", "info")
+    started = time.time()
+
+    logger.info(f"[Router] Classifying issue #{state.get('issue_number', '?')}")
+    event_bus.step_start(task_id, STEP_NAME)
+    event_bus.emit(task_id, STEP_NAME, f"Classifying issue #{state.get('issue_number', '?')}", "info")
 
     messages = [
         {"role": "system", "content": ROUTER_SYSTEM_PROMPT},
@@ -60,7 +66,6 @@ async def router_node(state: AgentState) -> dict[str, Any]:
 
     # Parse classification
     try:
-        # Extract JSON from response (handle markdown code blocks)
         clean = response.strip()
         if "```" in clean:
             clean = clean.split("```")[1]
@@ -71,12 +76,13 @@ async def router_node(state: AgentState) -> dict[str, Any]:
     except (json.JSONDecodeError, IndexError):
         classification = "feature"  # Safe default
 
-    logger.info(f"🧠 Shaka (Router): Classified as '{classification}'")
-    event_bus.emit(task_id, "Shaka (Router)", f"Classified as '{classification}'", "success")
+    logger.info(f"[Router] Classified as '{classification}'")
+    event_bus.emit(task_id, STEP_NAME, f"Classified as '{classification}'", "success")
+    event_bus.step_end(task_id, STEP_NAME, "success", time.time() - started)
 
     return {
         "task_classification": classification,
         "status": TaskStatus.PLANNING,
-        "current_step": f"Classified as {classification} — starting planning",
+        "current_step": f"Classified as {classification} - starting planning",
         "messages": [{"role": "assistant", "content": f"Task classified as: {classification}"}],
     }

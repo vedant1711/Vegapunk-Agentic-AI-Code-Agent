@@ -1,271 +1,259 @@
 "use client";
 
-import { useState, useCallback, useRef, useEffect } from "react";
-import { motion, AnimatePresence } from "framer-motion";
-import AgentCard from "@/components/agent-card";
-import PipelineFlow from "@/components/pipeline-flow";
-import LogStream from "@/components/log-stream";
+import { useCallback, useEffect, useRef, useState } from "react";
+
+import RunHeader from "@/components/run-header";
+import StepCard from "@/components/step-card";
 import TaskForm from "@/components/task-form";
-import { SATELLITES, LOG_SATELLITE_MAP } from "@/lib/types";
-import type { Satellite, SatelliteStatus, LogEntry, TaskState } from "@/lib/types";
+import {
+  STEP_DEFS,
+  STEP_NAME_TO_ID,
+  type AgentEventPayload,
+  type RunState,
+  type Step,
+} from "@/lib/types";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
-// Map satellite names from backend events to satellite IDs
-function satelliteNameToId(name: string): string | null {
-  for (const [key, id] of Object.entries(LOG_SATELLITE_MAP)) {
-    if (name.includes(key)) return id;
-  }
-  return null;
+let logSeq = 0;
+
+function initialSteps(): Step[] {
+  return STEP_DEFS.map((def) => ({
+    ...def,
+    status: "pending",
+    logs: [],
+  }));
 }
 
-export default function Dashboard() {
-  const [taskState, setTaskState] = useState<TaskState>({
+function initialRun(): RunState {
+  return {
     taskId: "",
     status: "idle",
     issueUrl: "",
-    activeSatellite: null,
-    satellites: {},
-    logs: [],
-  });
-  const [satellites, setSatellites] = useState<Satellite[]>(SATELLITES.map(s => ({ ...s })));
-  const logIdCounter = useRef(0);
+    steps: initialSteps(),
+    activeStepId: null,
+  };
+}
+
+function formatTs(unixSeconds: number): string {
+  const d = new Date(unixSeconds * 1000);
+  const pad = (n: number) => n.toString().padStart(2, "0");
+  return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+}
+
+export default function Dashboard() {
+  const [run, setRun] = useState<RunState>(initialRun());
+  const [now, setNow] = useState<number>(() => Date.now());
   const eventSourceRef = useRef<EventSource | null>(null);
 
-  const addLog = useCallback((satellite: string, message: string, level: LogEntry["level"]) => {
-    const now = new Date();
-    const ts = `${now.getHours().toString().padStart(2, "0")}:${now.getMinutes().toString().padStart(2, "0")}:${now.getSeconds().toString().padStart(2, "0")}`;
-    const entry: LogEntry = {
-      id: `log-${logIdCounter.current++}`,
-      timestamp: ts,
-      satellite,
-      message,
-      level,
-    };
-    setTaskState(prev => ({
-      ...prev,
-      logs: [...prev.logs, entry],
-    }));
-  }, []);
+  // Tick every ~500ms while running so the header duration updates live.
+  useEffect(() => {
+    if (run.status !== "running") return;
+    const id = setInterval(() => setNow(Date.now()), 500);
+    return () => clearInterval(id);
+  }, [run.status]);
 
-  const updateSatelliteStatus = useCallback((id: string, status: SatelliteStatus, lastMessage?: string) => {
-    setSatellites(prev => prev.map(s =>
-      s.id === id ? { ...s, status, lastMessage: lastMessage || s.lastMessage } : s
-    ));
-    setTaskState(prev => ({
-      ...prev,
-      activeSatellite: status === "active" ? id : prev.activeSatellite,
-      satellites: { ...prev.satellites, [id]: status },
-    }));
-  }, []);
+  const handleEvent = useCallback((data: AgentEventPayload) => {
+    setRun((prev) => {
+      const steps = prev.steps.map((s) => ({ ...s, logs: [...s.logs] }));
+      const stepId = STEP_NAME_TO_ID[data.step];
+      const target = stepId ? steps.find((s) => s.id === stepId) ?? null : null;
 
-  // Connect to real-time SSE stream for a task
-  const connectSSE = useCallback((taskId: string) => {
-    if (eventSourceRef.current) {
-      eventSourceRef.current.close();
-    }
+      let activeStepId = prev.activeStepId;
+      let status = prev.status;
+      let prUrl = prev.prUrl;
+      let endedAt = prev.endedAt;
+      let totalDurationMs = prev.totalDurationMs;
 
-    const es = new EventSource(`${API_BASE}/api/tasks/${taskId}/events`);
-    eventSourceRef.current = es;
+      if (data.event_type === "step_start" && target) {
+        target.status = "running";
+        target.startedAt = data.timestamp * 1000;
+        activeStepId = target.id;
+      } else if (data.event_type === "step_end" && target) {
+        target.status = (data.step_status ?? "success") as Step["status"];
+        target.endedAt = data.timestamp * 1000;
+        target.durationMs = data.duration_ms ?? undefined;
+        if (activeStepId === target.id) activeStepId = null;
+      } else if (data.event_type === "run_end") {
+        status = data.level === "error" ? "failed" : "completed";
+        endedAt = data.timestamp * 1000;
+        totalDurationMs = data.duration_ms ?? undefined;
+        activeStepId = null;
 
-    let lastSatelliteId: string | null = null;
-
-    es.onmessage = (event) => {
-      try {
-        const data = JSON.parse(event.data);
-        const satId = satelliteNameToId(data.satellite);
-
-        // If satellite changed, mark previous as done and new as active
-        if (satId && satId !== lastSatelliteId) {
-          if (lastSatelliteId) {
-            updateSatelliteStatus(lastSatelliteId, "done");
-          }
-          updateSatelliteStatus(satId, "active", data.message);
-          lastSatelliteId = satId;
-        } else if (satId) {
-          updateSatelliteStatus(satId, "active", data.message);
-        }
-
-        addLog(data.satellite, data.message, data.level || "info");
-
-        // Check if finished
-        if (data.message.includes("finished") || data.message.includes("Task failed")) {
-          if (lastSatelliteId) {
-            updateSatelliteStatus(lastSatelliteId, data.message.includes("failed") ? "error" : "done");
-          }
-          setTaskState(prev => ({
-            ...prev,
-            status: data.message.includes("failed") ? "failed" : "completed",
-            activeSatellite: null,
-          }));
-
-          // Extract PR URL if present
-          const prMatch = data.message.match(/https:\/\/github\.com\/[^\s]+/);
-          if (prMatch) {
-            setTaskState(prev => ({ ...prev, prUrl: prMatch[0] }));
-          }
-
-          es.close();
-        }
-      } catch {
-        // Ignore parse errors
+        const prMatch = data.message.match(/https:\/\/github\.com\/[^\s]+/);
+        if (prMatch) prUrl = prMatch[0];
       }
-    };
 
-    es.onerror = () => {
-      // Reconnect or close
-      setTimeout(() => {
-        if (es.readyState === EventSource.CLOSED) {
-          // Check task status via poll
-          fetch(`${API_BASE}/api/tasks/${taskId}`)
-            .then(r => r.json())
-            .then(data => {
-              if (data.pr_url) {
-                setTaskState(prev => ({
-                  ...prev,
-                  status: "completed",
-                  prUrl: data.pr_url,
-                }));
-              }
-            })
-            .catch(() => {});
+      // Log lines get attached to whichever step emitted them (if identifiable).
+      if (target && data.message !== "keepalive" && data.event_type !== "step_end") {
+        target.logs.push({
+          id: `log-${logSeq++}`,
+          timestamp: formatTs(data.timestamp),
+          message: data.message,
+          level: data.level,
+        });
+      }
+
+      return {
+        ...prev,
+        steps,
+        activeStepId,
+        status,
+        prUrl,
+        endedAt,
+        totalDurationMs,
+      };
+    });
+  }, []);
+
+  const connectSSE = useCallback(
+    (taskId: string) => {
+      if (eventSourceRef.current) eventSourceRef.current.close();
+      const es = new EventSource(`${API_BASE}/api/tasks/${taskId}/events`);
+      eventSourceRef.current = es;
+
+      es.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data) as AgentEventPayload;
+          handleEvent(data);
+          if (data.event_type === "run_end") es.close();
+        } catch {
+          /* ignore parse errors on keepalive comments */
         }
-      }, 2000);
-    };
-  }, [addLog, updateSatelliteStatus]);
+      };
 
-  // Cleanup SSE on unmount
+      es.onerror = () => {
+        // The stream can drop momentarily on the FastAPI dev server. If the
+        // connection is fully closed, fall back to a one-shot poll so we can
+        // still learn about the PR URL / final status.
+        setTimeout(() => {
+          if (es.readyState === EventSource.CLOSED) {
+            fetch(`${API_BASE}/api/tasks/${taskId}`)
+              .then((r) => r.json())
+              .then((data) => {
+                if (data.pr_url) {
+                  setRun((prev) => ({
+                    ...prev,
+                    status: "completed",
+                    prUrl: data.pr_url,
+                  }));
+                }
+              })
+              .catch(() => {});
+          }
+        }, 2000);
+      };
+    },
+    [handleEvent],
+  );
+
   useEffect(() => {
     return () => {
-      if (eventSourceRef.current) {
-        eventSourceRef.current.close();
-      }
+      if (eventSourceRef.current) eventSourceRef.current.close();
     };
   }, []);
 
-  const handleSubmit = useCallback(async (issueUrl: string) => {
-    // Reset state
-    setSatellites(SATELLITES.map(s => ({ ...s, status: "idle", lastMessage: undefined })));
-    setTaskState({
-      taskId: "",
-      status: "running",
-      issueUrl,
-      activeSatellite: null,
-      satellites: {},
-      logs: [],
-    });
-
-    try {
-      const res = await fetch(`${API_BASE}/api/tasks/from-url`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ issue_url: issueUrl }),
+  const handleSubmit = useCallback(
+    async (issueUrl: string) => {
+      logSeq = 0;
+      setRun({
+        ...initialRun(),
+        issueUrl,
+        status: "running",
+        startedAt: Date.now(),
       });
 
-      if (res.ok) {
-        const data = await res.json();
-        setTaskState(prev => ({
-          ...prev,
-          taskId: data.task_id,
-          status: "running",
-        }));
-        addLog("System", `Task ${data.task_id} queued — connecting to live stream...`, "info");
+      try {
+        const res = await fetch(`${API_BASE}/api/tasks/from-url`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ issue_url: issueUrl }),
+        });
 
-        // Connect to SSE for real-time events
-        connectSSE(data.task_id);
-        return;
+        if (res.ok) {
+          const data = await res.json();
+          if (data.error) {
+            setRun((prev) => ({ ...prev, status: "failed", error: data.error }));
+            return;
+          }
+          setRun((prev) => ({ ...prev, taskId: data.task_id }));
+          connectSSE(data.task_id);
+          return;
+        }
+
+        setRun((prev) => ({
+          ...prev,
+          status: "failed",
+          error: `HTTP ${res.status}`,
+        }));
+      } catch {
+        setRun((prev) => ({
+          ...prev,
+          status: "failed",
+          error: "Backend not reachable - is uvicorn running on port 8000?",
+        }));
       }
-    } catch {
-      addLog("System", "Backend not available — check that uvicorn is running on port 8000", "error");
-      setTaskState(prev => ({ ...prev, status: "failed" }));
-    }
-  }, [addLog, connectSSE]);
+    },
+    [connectSSE],
+  );
+
+  const statusDotColor =
+    run.status === "running"
+      ? "var(--running)"
+      : run.status === "completed"
+      ? "var(--success)"
+      : run.status === "failed"
+      ? "var(--error)"
+      : "var(--border-strong)";
 
   return (
-    <div className="relative z-10 min-h-screen">
-      {/* Header */}
-      <header className="border-b border-white/5 bg-black/20 backdrop-blur-xl sticky top-0 z-50">
-        <div className="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <motion.span
-              className="text-3xl"
-              animate={{ rotate: [0, 5, -5, 0] }}
-              transition={{ duration: 3, repeat: Infinity }}
-            >
-              🏴‍☠️
-            </motion.span>
-            <div>
-              <h1 className="text-xl font-bold bg-gradient-to-r from-[#f5c542] to-[#e67e22] bg-clip-text text-transparent">
-                Vegapunk
-              </h1>
-              <p className="text-[10px] text-gray-500 uppercase tracking-[0.2em]">
-                Agentic Coding Agent
-              </p>
-            </div>
+    <div className="min-h-screen">
+      <header className="border-b border-[var(--border)]">
+        <div className="max-w-5xl mx-auto px-6 py-4 flex items-center justify-between">
+          <div className="flex items-baseline gap-3">
+            <h1 className="text-lg font-semibold tracking-tight">Vegapunk</h1>
+            <span className="text-xs text-[var(--text-muted)]">Autonomous Coding Agent</span>
           </div>
-
-          <div className="flex items-center gap-4">
-            <AnimatePresence>
-              {taskState.status === "completed" && taskState.prUrl && (
-                <motion.a
-                  initial={{ opacity: 0, scale: 0.8 }}
-                  animate={{ opacity: 1, scale: 1 }}
-                  href={taskState.prUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="px-4 py-2 rounded-xl bg-green-500/20 text-green-400 text-xs font-semibold hover:bg-green-500/30 transition-colors"
-                >
-                  ✅ View PR →
-                </motion.a>
-              )}
-            </AnimatePresence>
-
-            <div className={`w-2.5 h-2.5 rounded-full ${
-              taskState.status === "running" ? "bg-cyan-400 animate-pulse" :
-              taskState.status === "completed" ? "bg-green-400" :
-              taskState.status === "failed" ? "bg-red-400" :
-              "bg-gray-600"
-            }`} />
+          <div className="flex items-center gap-2">
+            <span
+              className="status-dot"
+              style={{
+                background: statusDotColor,
+                boxShadow: run.status === "running" ? `0 0 8px ${statusDotColor}` : "none",
+              }}
+            />
+            <span className="text-xs text-[var(--text-muted)] capitalize">{run.status}</span>
           </div>
         </div>
       </header>
 
-      {/* Main content */}
-      <main className="max-w-7xl mx-auto px-6 py-8 space-y-6">
-        {/* Task Form */}
-        <TaskForm onSubmit={handleSubmit} isRunning={taskState.status === "running"} />
+      <main className="max-w-5xl mx-auto px-6 py-6 space-y-4">
+        <TaskForm onSubmit={handleSubmit} isRunning={run.status === "running"} />
 
-        {/* Pipeline Flow */}
-        <PipelineFlow
-          satelliteStatuses={taskState.satellites}
-          activeSatellite={taskState.activeSatellite}
-        />
+        {run.status !== "idle" && (
+          <>
+            <RunHeader run={run} now={now} />
+            <div className="space-y-2">
+              {run.steps.map((step) => (
+                <StepCard key={step.id} step={step} />
+              ))}
+            </div>
 
-        {/* Two-column: Log Stream (main) + Agent Cards (side) */}
-        <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
-          {/* Log Stream — takes 3 columns, prominent */}
-          <div className="lg:col-span-3 lg:order-1">
-            <LogStream logs={taskState.logs} />
-          </div>
-
-          {/* Agent Cards — takes 2 columns */}
-          <div className="lg:col-span-2 lg:order-2 grid grid-cols-1 sm:grid-cols-2 gap-3">
-            {satellites.map((sat, idx) => (
-              <AgentCard
-                key={sat.id}
-                satellite={sat}
-                isActive={taskState.activeSatellite === sat.id}
-                index={idx}
-              />
-            ))}
-          </div>
-        </div>
+            {run.error && (
+              <div
+                className="panel p-4 mono text-sm"
+                style={{ color: "var(--error)", borderColor: "var(--error)" }}
+              >
+                Error: {run.error}
+              </div>
+            )}
+          </>
+        )}
       </main>
 
-      {/* Footer */}
-      <footer className="border-t border-white/5 mt-12 py-6 text-center">
-        <p className="text-xs text-gray-600">
-          Powered by Stella 🧬 • NVIDIA NIM + Gemini • LangGraph
+      <footer className="border-t border-[var(--border)] mt-8 py-4 text-center">
+        <p className="text-xs text-[var(--text-subtle)]">
+          Vegapunk · Autonomous Coding Agent · LangGraph · FastAPI · Next.js
         </p>
       </footer>
     </div>

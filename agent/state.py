@@ -57,6 +57,7 @@ class AgentState(TypedDict):
     status: TaskStatus                # Current pipeline status
     current_step: str                 # Human-readable current step
     retry_count: int                  # Number of test-fix retry cycles
+    review_retry_count: int           # Number of reviewer→coder revision cycles
     max_retries: int                  # Maximum retries before failing
     error: str                        # Error message if failed
 

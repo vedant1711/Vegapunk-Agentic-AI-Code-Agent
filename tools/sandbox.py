@@ -8,7 +8,7 @@ import uuid
 from typing import Any
 
 import docker
-from docker.errors import DockerException, ContainerError
+from docker.errors import DockerException
 
 from app.config import settings
 
@@ -67,14 +67,14 @@ class DockerSandbox:
             container = await asyncio.to_thread(
                 self._docker.containers.run,
                 image=settings.sandbox_image,
-                command=f"bash -c '{command}'",
+                command=["bash", "-c", command],
                 working_dir="/workspace",
                 volumes={working_dir: {"bind": "/workspace", "mode": "rw"}},
                 name=container_name,
                 mem_limit=settings.sandbox_memory_limit,
                 cpu_period=100000,
                 cpu_quota=int(settings.sandbox_cpu_limit * 100000),
-                network_mode="none",  # No network access inside sandbox
+                network_mode="bridge" if settings.sandbox_allow_network else "none",
                 environment=env or {},
                 detach=True,
                 remove=False,
@@ -121,7 +121,7 @@ class DockerSandbox:
     ) -> dict[str, Any]:
         """Fallback: execute locally when Docker isn't available (dev only).
 
-        ⚠️ NOT sandboxed — use only in development.
+        NOT sandboxed - use only in development.
         """
         logger.warning("Running command locally (no Docker sandbox)!")
         timeout = timeout or settings.sandbox_timeout
@@ -145,7 +145,7 @@ class DockerSandbox:
                 "container": "local",
             }
 
-        except asyncio.TimeoutError:
+        except TimeoutError:
             return {"error": "Execution timed out", "exit_code": -1, "stdout": "", "stderr": ""}
         except Exception as e:
             return {"error": str(e), "exit_code": -1, "stdout": "", "stderr": ""}

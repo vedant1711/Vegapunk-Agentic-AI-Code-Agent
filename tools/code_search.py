@@ -117,7 +117,7 @@ async def get_file_structure(
             new_prefix = prefix + ("    " if is_last else "│   ")
 
             if entry.is_dir():
-                tree_lines.append(f"{prefix}{connector}📁 {entry.name}/")
+                tree_lines.append(f"{prefix}{connector}{entry.name}/")
                 _walk(entry, new_prefix, depth + 1)
             else:
                 size = entry.stat().st_size
@@ -126,7 +126,7 @@ async def get_file_structure(
 
     _walk(root)
 
-    tree = f"📂 {root.name}/\n" + "\n".join(tree_lines)
+    tree = f"{root.name}/\n" + "\n".join(tree_lines)
     return {"tree": tree, "files": file_list, "total_files": len(file_list)}
 
 

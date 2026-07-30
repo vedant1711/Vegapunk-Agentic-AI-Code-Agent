@@ -190,7 +190,7 @@ async def _python_search(
                 continue
             filepath = os.path.join(root, filename)
             try:
-                with open(filepath, "r", encoding="utf-8", errors="replace") as f:
+                with open(filepath, encoding="utf-8", errors="replace") as f:
                     for i, line in enumerate(f, 1):
                         if regex.search(line):
                             matches.append({
@@ -242,7 +242,6 @@ async def apply_edit(
     # Fallback: try whitespace-normalized matching
     # This handles the common case where the LLM generates slightly different
     # indentation or trailing whitespace
-    import re
 
     def normalize_ws(text: str) -> str:
         """Normalize whitespace for fuzzy comparison."""
