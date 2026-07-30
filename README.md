@@ -159,6 +159,31 @@ Edit the transcript to change what reviewers see.
 
 ---
 
+## Use Vegapunk from your IDE (MCP)
+
+Vegapunk ships an MCP server that exposes the internal tools plus the tree-sitter repo graph over the [Model Context Protocol](https://modelcontextprotocol.io). Any MCP-capable client can drive it — Claude Code, Cursor, Cline, Continue.dev, Windsurf, Codex CLI, and the ~9k other servers in the ecosystem.
+
+Two-line setup for Claude Code (`~/.config/claude/mcp.json`):
+
+```json
+{
+  "mcpServers": {
+    "vegapunk": {
+      "command": "vegapunk-mcp",
+      "env": { "VEGAPUNK_WORKSPACE": "/absolute/path/to/your/project" }
+    }
+  }
+}
+```
+
+Then ask your IDE things like *"which files reference `hash_password`?"* or *"rank files by relevance to `user login`."* The IDE hits `vegapunk://graph/references/hash_password` or `vegapunk://graph/relevant?q=user%20login` over MCP and gets structured JSON back.
+
+**The novel bit:** most MCP servers expose only tools (procedural verbs). Vegapunk exposes the repo graph as **first-class URI-addressable resources** so clients can subscribe, cite, and cache graph slices without invoking a tool every time. Same measured 10× token / 2× tool-call reduction the 2026 Codebase-Memory study reported.
+
+Full setup — including Cursor and Cline configs — in [`mcp_server/README.md`](mcp_server/README.md).
+
+---
+
 ## Features
 
 ### Tree-sitter repo graph — [`tools/repo_graph.py`](tools/repo_graph.py)

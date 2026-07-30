@@ -3,7 +3,7 @@ requires = ["setuptools>=68.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
-include = ["app*", "agent*", "tools*", "llm*"]
+include = ["app*", "agent*", "tools*", "llm*", "mcp_server*"]
 
 [project]
 name = "vegapunk"
@@ -65,7 +65,18 @@ dependencies = [
     # nx.pagerank silently degrades to a uniform prior which defeats the
     # point of the hybrid ranking.
     "scipy>=1.13,<2",
+
+    # --- Model Context Protocol (Phase 3) ---
+    # Exposes tools/* and the repo graph over MCP so external clients
+    # (Claude Code / Cursor / Cline) can drive Vegapunk without any
+    # custom SDK.
+    "mcp>=1.2.0,<2",
 ]
+
+[project.scripts]
+# `pip install .` places this as a shell command so users can wire it
+# into their MCP client config with a single argv entry.
+vegapunk-mcp = "mcp_server.server:main"
 
 [project.optional-dependencies]
 dev = [
