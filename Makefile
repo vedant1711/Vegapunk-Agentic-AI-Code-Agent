@@ -32,7 +32,10 @@ install:
 	cd frontend && npm install
 
 dev-api:
-	uvicorn app.main:app --reload --port $(PORT_API) --reload-exclude 'workspaces/*'
+	@# Uses `python -m uvicorn` (not bare `uvicorn`) so it works whether or
+	@# not the venv's bin dir is on PATH - as long as the venv's `python`
+	@# is first on PATH (which `source .venv/bin/activate` guarantees).
+	$(PYTHON) -m uvicorn app.main:app --reload --port $(PORT_API) --reload-exclude 'workspaces/*'
 
 dev-web:
 	cd frontend && npm run dev -- --port $(PORT_WEB)
@@ -45,13 +48,13 @@ dev:
 test: test-backend test-frontend
 
 test-backend:
-	pytest tests/ -v --cov --cov-report=term-missing
+	$(PYTHON) -m pytest tests/ -v --cov --cov-report=term-missing
 
 test-frontend:
 	cd frontend && npx tsc --noEmit && npm run lint
 
 lint:
-	ruff check .
+	$(PYTHON) -m ruff check .
 	cd frontend && npm run lint
 
 typecheck:
