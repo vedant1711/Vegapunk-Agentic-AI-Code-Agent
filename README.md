@@ -29,49 +29,147 @@ Vegapunk is an autonomous coding agent that resolves GitHub issues end-to-end. I
 
 ## Architecture
 
+Vegapunk is a **FastAPI backend + Next.js frontend**. The backend hosts a LangGraph pipeline that emits typed events over Server-Sent Events; the frontend renders them as a live trace.
+
+Rather than one sprawling diagram, here are three focused views — each answers one question.
+
+### 1. What happens when you click "Run agent"
+
+The high-level request timeline from click to PR link, across every process boundary.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant UI as Frontend<br/>(Next.js)
+    participant API as Backend<br/>(FastAPI)
+    participant Bus as Event Bus<br/>(SSE)
+    participant Pipe as LangGraph<br/>Pipeline
+    participant LLM as LLM Provider<br/>(NIM → Gemini)
+    participant GH as GitHub
+
+    UI->>API: POST /api/tasks/from-url {issue_url}
+    API->>GH: fetch issue (title, body, labels)
+    GH-->>API: issue payload
+    API-->>UI: {task_id}
+    UI->>Bus: GET /api/tasks/{id}/events (SSE)
+    activate Bus
+
+    API->>Pipe: run_agent(task_id, …)
+    activate Pipe
+
+    Note over Pipe: Setup — clone repo, baseline tests,<br/>build tree-sitter graph
+    Pipe->>Bus: step_start / log / step_end
+    Bus-->>UI: SSE events (rendered live)
+
+    Note over Pipe: Router — classify (1 LLM call)
+    Pipe->>LLM: chat(system = router prompt)
+    LLM-->>Pipe: {classification}
+    Pipe->>Bus: step events
+
+    Note over Pipe: Planner — retrieve + plan (1 LLM call)
+    Pipe->>LLM: chat(system = planner prompt)
+    LLM-->>Pipe: markdown plan
+    Pipe->>Bus: step events
+
+    Note over Pipe: Coder — Best-of-N (K parallel LLM calls)
+    par
+        Pipe->>LLM: chat(temp=0.1)
+    and
+        Pipe->>LLM: chat(temp=0.5)
+    and
+        Pipe->>LLM: chat(temp=0.9)
+    end
+    LLM-->>Pipe: K candidate diffs
+    Note over Pipe: Winner picked by tests + diff size
+    Pipe->>Bus: per-candidate events + winner
+
+    Note over Pipe: Tester + Reviewer<br/>(may loop back to Coder)
+    Pipe->>Bus: step events
+
+    Note over Pipe: PR Creator — commit + push + open PR
+    Pipe->>GH: create pull request
+    GH-->>Pipe: PR URL
+    Pipe->>Bus: run_end (with PR URL)
+    deactivate Pipe
+
+    Bus-->>UI: run_end event
+    deactivate Bus
+    UI->>UI: show "View pull request" button
+```
+
+### 2. Best-of-N Coder — the quality-lifting mechanic
+
+Instead of trusting a single LLM sample, the Coder generates **K parallel candidates** at different temperatures, verifies each against real tests in an isolated git worktree, and keeps the winner. Rooted in the DeepSWE / ACECoder line of research on execution-verified rewards.
+
+```mermaid
+flowchart TB
+    Plan[Implementation plan<br/>from Planner] --> Ctx[Prompt context<br/>= plan + relevant files + prior feedback]
+
+    Ctx --> C0[LLM call #0<br/>temperature 0.1]
+    Ctx --> C1[LLM call #1<br/>temperature 0.5]
+    Ctx --> C2[LLM call #2<br/>temperature 0.9]
+
+    C0 --> W0[Fresh git worktree<br/>agent/candidate-a]
+    C1 --> W1[Fresh git worktree<br/>agent/candidate-b]
+    C2 --> W2[Fresh git worktree<br/>agent/candidate-c]
+
+    W0 --> A0[Apply changes]
+    W1 --> A1[Apply changes]
+    W2 --> A2[Apply changes]
+
+    A0 --> T0[Run tests<br/>diff vs baseline]
+    A1 --> T1[Run tests<br/>diff vs baseline]
+    A2 --> T2[Run tests<br/>diff vs baseline]
+
+    T0 --> S{Selector<br/>fewest new failures →<br/>most successful applies →<br/>smallest diff}
+    T1 --> S
+    T2 --> S
+
+    S --> Win[Winning candidate]
+    Win --> Main[Re-apply winner<br/>to main workspace]
+
+    W0 -.->|cleanup| X([discarded])
+    W1 -.->|cleanup| X
+    W2 -.->|cleanup| X
+
+    style Win fill:#22c55e33,stroke:#22c55e
+    style Main fill:#22c55e33,stroke:#22c55e
+    style X fill:#33333a,stroke:#565660,color:#8a8a91
+```
+
+`K` is configurable via `CODER_BON_K` (default 3; set to 1 to disable and use the fast path).
+
+### 3. Repo graph — the retrieval mechanic
+
+Before the Planner writes anything, we build a **tree-sitter graph** of the workspace and rank files by a hybrid of keyword overlap and PageRank. Grounded in a 2026 study reporting ~10× token reduction over regex scans on real repos.
+
 ```mermaid
 flowchart LR
-    subgraph Frontend[Next.js Frontend :3000]
-        ui[Trace UI<br/>run header + step cards]
-    end
+    Files[(Workspace<br/>.py / .ts / .js / .go / .rs)] --> TS[tree-sitter parse<br/>per file, per language]
 
-    subgraph Backend[FastAPI Backend :8000]
-        api[Tasks API]
-        bus[Event Bus<br/>step_start / step_end / log / run_end]
-        graph[LangGraph Pipeline]
-    end
+    TS --> Sym[Symbols<br/>funcs / classes / methods]
+    TS --> Ref[References<br/>calls / imports]
 
-    subgraph Pipeline[Pipeline]
-        direction LR
-        setup[Setup<br/>clone + baseline + repo-graph]
-        router[Router<br/>classify]
-        planner[Planner<br/>plan with repo-graph]
-        coder[Coder<br/>Best-of-N]
-        tester[Tester<br/>vs baseline]
-        reviewer[Reviewer<br/>self-review]
-        pr[PR Creator<br/>commit + push]
+    Sym --> Idx[Symbol index<br/>name → Symbol&#91;&#93;]
+    Ref --> Idx
 
-        setup --> router --> planner --> coder --> tester
-        tester -->|new failures| coder
-        tester -->|pass| reviewer
-        reviewer -->|revise| coder
-        reviewer -->|approve| pr
-    end
+    Sym --> FG[File reference graph<br/>edge a→b: a uses<br/>a symbol defined in b]
+    Ref --> FG
+    FG --> PR[NetworkX PageRank<br/>α = 0.85]
 
-    subgraph Infrastructure[Infrastructure]
-        llm[LLM Provider<br/>NIM &rarr; Gemini]
-        tools[Tools<br/>git / github / fs /<br/>test runner / sandbox /<br/>repo-graph / worktrees]
-    end
+    Query[User query<br/>issue title + body] --> Tok[Tokenize<br/>drop stop-words]
+    Tok --> Rank
+    Idx --> Rank
+    PR --> Rank
 
-    ui -->|POST /api/tasks/from-url| api
-    ui -->|POST /api/tasks/demo| api
-    api --> graph
-    graph -.-> Pipeline
-    Pipeline --> bus
-    bus -->|SSE| ui
-    Pipeline --> llm
-    Pipeline --> tools
+    Rank[Hybrid ranking<br/>0.7 · keyword + 0.3 · pagerank] --> Top[Top-15 relevant files]
+    Top --> Planner[Planner LLM prompt]
+
+    style Rank fill:#4f8cff33,stroke:#4f8cff
+    style Top fill:#22c55e33,stroke:#22c55e
 ```
+
+For a **code-level walkthrough** with file:line references, see [`docs/WALKTHROUGH.md`](docs/WALKTHROUGH.md). For vocabulary, [`docs/GLOSSARY.md`](docs/GLOSSARY.md).
 
 ---
 

@@ -71,19 +71,13 @@ async def setup_node(state: AgentState) -> dict[str, Any]:
 
     # Capture baseline test failures so downstream steps can distinguish
     # pre-existing failures from ones introduced by our changes.
-    import re as _re
-
+    from tools.best_of_n import extract_failures
     from tools.test_runner import run_tests
 
     baseline_failures: list[str] = []
     try:
         baseline = await run_tests(workspace)
-        output = baseline.get("output", "")
-        for line in output.splitlines():
-            if "FAILED" in line:
-                match = _re.match(r"^([\w/\.\:]+)\s+FAILED", line.strip())
-                if match:
-                    baseline_failures.append(match.group(1))
+        baseline_failures = extract_failures(baseline.get("output", ""))
         if baseline_failures:
             logger.info(
                 f"[Setup] Baseline has {len(baseline_failures)} pre-existing failures: {baseline_failures}"

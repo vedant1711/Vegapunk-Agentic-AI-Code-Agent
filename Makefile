@@ -50,6 +50,11 @@ test: test-backend test-frontend
 test-backend:
 	$(PYTHON) -m pytest tests/ -v --cov --cov-report=term-missing
 
+test-e2e:
+	@# Runs the full pipeline against tests/fixtures/seed_repo with LLM +
+	@# GitHub API + git push mocked out. No external services, no API keys.
+	$(PYTHON) -m pytest tests/test_pipeline_e2e.py -v
+
 test-frontend:
 	cd frontend && npx tsc --noEmit && npm run lint
 

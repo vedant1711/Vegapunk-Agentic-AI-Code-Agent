@@ -206,101 +206,6 @@ async def _python_search(
     return {"matches": matches, "total": len(matches)}
 
 
-async def apply_edit(
-    file_path: str,
-    original: str,
-    replacement: str,
-) -> dict[str, Any]:
-    """Apply a targeted edit to a file by replacing exact text.
-
-    Falls back to whitespace-normalized matching if exact match fails.
-
-    Args:
-        file_path: Path to the file.
-        original: The exact text to find and replace.
-        replacement: The replacement text.
-
-    Returns:
-        Dict with 'success' and details.
-    """
-    path = Path(file_path)
-    if not path.exists():
-        return {"error": f"File not found: {file_path}"}
-
-    content = path.read_text(encoding="utf-8")
-
-    # Try exact match first
-    if original in content:
-        new_content = content.replace(original, replacement, 1)
-        path.write_text(new_content, encoding="utf-8")
-        return {
-            "success": True,
-            "path": str(path.resolve()),
-            "match_type": "exact",
-        }
-
-    # Fallback: try whitespace-normalized matching
-    # This handles the common case where the LLM generates slightly different
-    # indentation or trailing whitespace
-
-    def normalize_ws(text: str) -> str:
-        """Normalize whitespace for fuzzy comparison."""
-        # Replace tabs with spaces, collapse multiple spaces within lines
-        lines = text.strip().splitlines()
-        return "\n".join(line.rstrip() for line in lines)
-
-    norm_original = normalize_ws(original)
-    content_lines = content.splitlines(keepends=True)
-
-    # Sliding window search — find the best match
-    orig_lines = norm_original.splitlines()
-    orig_line_count = len(orig_lines)
-
-    best_match = None
-    best_score = 0
-
-    for i in range(len(content_lines) - orig_line_count + 1):
-        window = content_lines[i : i + orig_line_count]
-        window_text = "".join(window)
-        norm_window = normalize_ws(window_text)
-
-        if norm_window == norm_original:
-            # Perfect normalized match
-            new_content = (
-                "".join(content_lines[:i])
-                + replacement
-                + "\n"
-                + "".join(content_lines[i + orig_line_count :])
-            )
-            path.write_text(new_content, encoding="utf-8")
-            return {
-                "success": True,
-                "path": str(path.resolve()),
-                "match_type": "normalized",
-            }
-
-        # Score partial matches (for debugging)
-        matching_lines = sum(
-            1 for a, b in zip(norm_window.splitlines(), orig_lines)
-            if a.strip() == b.strip()
-        )
-        score = matching_lines / orig_line_count if orig_line_count > 0 else 0
-        if score > best_score:
-            best_score = score
-            best_match = window_text
-
-    # Log what we couldn't match for debugging
-    logger.warning(
-        f"apply_edit failed for {file_path}.\n"
-        f"  Searched for ({len(orig_lines)} lines):\n"
-        f"    {repr(original[:200])}\n"
-        f"  Best partial match (score={best_score:.0%}):\n"
-        f"    {repr(best_match[:200] if best_match else 'None')}"
-    )
-
-    return {"error": f"Original text not found in {file_path}"}
-
-
 # Tool definitions for LangChain / LLM function calling
 FILESYSTEM_TOOLS = [
     {
@@ -362,22 +267,6 @@ FILESYSTEM_TOOLS = [
                     "file_pattern": {"type": "string", "description": "Glob to filter files (e.g. '*.py')"},
                 },
                 "required": ["directory", "pattern"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "apply_edit",
-            "description": "Apply a targeted edit to a file by finding and replacing exact text.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "file_path": {"type": "string", "description": "Path to the file to edit"},
-                    "original": {"type": "string", "description": "Exact text to find"},
-                    "replacement": {"type": "string", "description": "Replacement text"},
-                },
-                "required": ["file_path", "original", "replacement"],
             },
         },
     },

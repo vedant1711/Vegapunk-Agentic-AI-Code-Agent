@@ -5,7 +5,7 @@ import tempfile
 
 import pytest
 
-from tools.filesystem import apply_edit, list_directory, read_file, search_files, write_file
+from tools.filesystem import list_directory, read_file, search_files, write_file
 
 
 @pytest.mark.asyncio
@@ -54,23 +54,6 @@ async def test_list_directory():
         names = [e["name"] for e in result["entries"]]
         assert "test.py" in names
         assert "README.md" in names
-
-
-@pytest.mark.asyncio
-async def test_apply_edit():
-    """Test applying an edit to a file."""
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
-        f.write("def hello():\n    return 'Hello'\n")
-        tmp_path = f.name
-
-    try:
-        result = await apply_edit(tmp_path, "return 'Hello'", "return 'Hello, World!'")
-        assert result["success"] is True
-
-        content = await read_file(tmp_path)
-        assert "Hello, World!" in content["content"]
-    finally:
-        os.unlink(tmp_path)
 
 
 @pytest.mark.asyncio

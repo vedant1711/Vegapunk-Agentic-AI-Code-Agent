@@ -486,7 +486,7 @@ def _parse_changes(response: str) -> list[dict[str, Any]]:
             else:
                 return []
 
-        valid = {"rewrite", "create", "line_edit", "edit", "delete"}
+        valid = {"rewrite", "create", "line_edit", "delete"}
         return [c for c in parsed if c.get("action") in valid and c.get("file_path")]
 
     except (json.JSONDecodeError, ValueError, IndexError) as e:
@@ -514,15 +514,6 @@ async def _apply_change(workspace: str, change: dict[str, Any]) -> dict[str, Any
 
     elif action == "line_edit":
         return await _apply_line_edit(full_path, change)
-
-    elif action == "edit":
-        # Legacy find-and-replace (fallback)
-        from tools.filesystem import apply_edit
-        original = change.get("original", "")
-        replacement = change.get("replacement", "")
-        if not original:
-            return {"error": "No 'original' text"}
-        return await apply_edit(full_path, original, replacement)
 
     elif action == "delete":
         try:

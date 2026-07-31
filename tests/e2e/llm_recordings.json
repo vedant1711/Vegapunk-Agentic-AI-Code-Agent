@@ -1,0 +1,15 @@
+{
+  "router": "{\n  \"classification\": \"bug_fix\",\n  \"complexity\": \"simple\",\n  \"summary\": \"Handle divide-by-zero in calc.divide\",\n  \"key_files_to_investigate\": [\"src/calc.py\", \"tests/test_calc.py\"]\n}\n",
+
+  "planner": "## Analysis\n\nThe `divide` function in `src/calc.py` performs `a / b` without checking whether `b == 0`. When called with `b=0`, Python raises `ZeroDivisionError`. The test `test_divide_by_zero` in `tests/test_calc.py` expects `divide(10, 0)` to return `None` instead.\n\n## Files to modify\n\n- `src/calc.py`\n\n## Changes per file\n\n### `src/calc.py`\n\nAdd a guard before the division: if `b == 0`, return `None`. Otherwise return `a / b` as today. Preserve the signature and behaviour of `multiply`.\n\n## Testing approach\n\nThe existing `tests/test_calc.py::test_divide_by_zero` becomes green once the guard is in place. Normal-path tests (`test_divide_normal`, `test_multiply_normal`) remain green.\n\n## Potential risks\n\nCallers that previously relied on `divide` raising `ZeroDivisionError` will now silently receive `None`. In this codebase there are no such callers.\n",
+
+  "coder": [
+    "[{\"action\": \"rewrite\", \"file_path\": \"src/calc.py\", \"content\": \"\\\"\\\"\\\"Trivial calculator - divide handles b=0 by returning None.\\\"\\\"\\\"\\n\\n\\ndef divide(a, b):\\n    if b == 0:\\n        return None\\n    return a / b\\n\\n\\ndef multiply(a, b):\\n    return a * b\\n\"}]",
+
+    "[{\"action\": \"rewrite\", \"file_path\": \"src/calc.py\", \"content\": \"\\\"\\\"\\\"Trivial calculator.\\\"\\\"\\\"\\n\\n\\ndef divide(a, b):\\n    if b == 0:\\n        return None\\n    return a / b\\n\\n\\ndef multiply(a, b):\\n    return a * b\\n\"}]",
+
+    "[{\"action\": \"rewrite\", \"file_path\": \"src/calc.py\", \"content\": \"\\\"\\\"\\\"Trivial calculator.\\\"\\\"\\\"\\n\\n\\ndef divide(a, b):\\n    try:\\n        return a / b\\n    except ZeroDivisionError:\\n        return None\\n\\n\\ndef multiply(a, b):\\n    return a * b\\n\"}]"
+  ],
+
+  "reviewer": "{\n  \"approved\": true,\n  \"feedback\": \"The fix cleanly handles b=0 by returning None. The existing tests will pass; no callers relied on the previous ZeroDivisionError behaviour.\",\n  \"issues\": [],\n  \"pr_title\": \"Fix divide-by-zero in calc.divide\",\n  \"pr_body\": \"## Summary\\n\\nResolves #1. `divide(a, 0)` now returns `None` instead of raising `ZeroDivisionError`.\\n\\n## Testing\\n\\n`tests/test_calc.py::test_divide_by_zero` now passes; normal-path tests remain green.\"\n}\n"
+}

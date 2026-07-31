@@ -4,28 +4,17 @@ from __future__ import annotations
 
 import logging
 import os
-import re
 import time
 from typing import Any
 
 from agent.state import AgentState, TaskStatus
 from app.events import event_bus
+from tools.best_of_n import extract_failures
 from tools.test_runner import run_linter, run_tests
 
 logger = logging.getLogger(__name__)
 
 STEP_NAME = "Tester"
-
-
-def _extract_failures(output: str) -> list[str]:
-    """Extract failed test names from pytest output."""
-    failures: list[str] = []
-    for line in output.splitlines():
-        if "FAILED" in line:
-            match = re.match(r"^([\w/\.\:]+)\s+FAILED", line.strip())
-            if match:
-                failures.append(match.group(1))
-    return failures
 
 
 async def tester_node(state: AgentState) -> dict[str, Any]:
@@ -69,7 +58,7 @@ async def tester_node(state: AgentState) -> dict[str, Any]:
 
     # Compare against baseline - only NEW failures count
     if not raw_passed and baseline_failures:
-        current_failures = _extract_failures(test_output)
+        current_failures = extract_failures(test_output)
         new_failures = [f for f in current_failures if f not in baseline_failures]
 
         if not new_failures:
