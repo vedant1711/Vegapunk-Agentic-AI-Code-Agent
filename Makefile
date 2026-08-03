@@ -55,6 +55,15 @@ test-e2e:
 	@# GitHub API + git push mocked out. No external services, no API keys.
 	$(PYTHON) -m pytest tests/test_pipeline_e2e.py -v
 
+bench:
+	@# Reproducible perf + retrieval-quality measurements. Writes
+	@# benchmarks/results.json. Full run ~90 s. See benchmarks/README.md.
+	$(PYTHON) -m benchmarks.run
+
+bench-fast:
+	@# Same as `make bench` but skips the E2E-subprocess timing loop.
+	$(PYTHON) -m benchmarks.run --skip-e2e
+
 test-frontend:
 	cd frontend && npx tsc --noEmit && npm run lint
 

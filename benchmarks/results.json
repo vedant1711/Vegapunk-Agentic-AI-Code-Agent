@@ -1,0 +1,405 @@
+{
+  "generated_at": "2026-08-03T02:05:16.154356+00:00",
+  "git_sha": "3105092",
+  "python": "3.13.7",
+  "platform": {
+    "system": "Darwin",
+    "release": "24.6.0",
+    "machine": "arm64"
+  },
+  "retrieval": {
+    "queries": [
+      {
+        "workspace": "tests/fixtures/mini_py",
+        "query": "user login password verification",
+        "ground_truth": [
+          "src/auth.py",
+          "src/api.py"
+        ],
+        "legacy": {
+          "method": "legacy",
+          "n_files_returned": 4,
+          "top_files": [
+            "src/db.py",
+            "src/api.py",
+            "src/auth.py",
+            "tests/test_auth.py"
+          ],
+          "total_chars": 2489,
+          "rank_of_first_ground_truth": 2,
+          "elapsed_ms": 12.33162498101592
+        },
+        "graph": {
+          "method": "graph",
+          "n_files_returned": 4,
+          "top_files": [
+            "src/auth.py",
+            "src/db.py",
+            "src/api.py",
+            "tests/test_auth.py"
+          ],
+          "total_chars": 2489,
+          "rank_of_first_ground_truth": 1,
+          "elapsed_ms": 0.07391674444079399
+        },
+        "char_reduction_x": 1.0,
+        "graph_build_ms": 5.1
+      },
+      {
+        "workspace": "tests/fixtures/mini_py",
+        "query": "hash password for authentication",
+        "ground_truth": [
+          "src/auth.py"
+        ],
+        "legacy": {
+          "method": "legacy",
+          "n_files_returned": 4,
+          "top_files": [
+            "src/auth.py",
+            "tests/test_auth.py",
+            "src/db.py",
+            "src/api.py"
+          ],
+          "total_chars": 2489,
+          "rank_of_first_ground_truth": 1,
+          "elapsed_ms": 8.940625004470348
+        },
+        "graph": {
+          "method": "graph",
+          "n_files_returned": 2,
+          "top_files": [
+            "src/auth.py",
+            "tests/test_auth.py"
+          ],
+          "total_chars": 1560,
+          "rank_of_first_ground_truth": 1,
+          "elapsed_ms": 0.02458319067955017
+        },
+        "char_reduction_x": 1.596,
+        "graph_build_ms": 1.4
+      },
+      {
+        "workspace": "tests/fixtures/mini_py",
+        "query": "save user to database",
+        "ground_truth": [
+          "src/db.py",
+          "src/auth.py"
+        ],
+        "legacy": {
+          "method": "legacy",
+          "n_files_returned": 3,
+          "top_files": [
+            "src/api.py",
+            "src/db.py",
+            "src/auth.py"
+          ],
+          "total_chars": 2071,
+          "rank_of_first_ground_truth": 2,
+          "elapsed_ms": 6.954459007829428
+        },
+        "graph": {
+          "method": "graph",
+          "n_files_returned": 2,
+          "top_files": [
+            "src/db.py",
+            "src/auth.py"
+          ],
+          "total_chars": 1624,
+          "rank_of_first_ground_truth": 1,
+          "elapsed_ms": 0.021416693925857544
+        },
+        "char_reduction_x": 1.275,
+        "graph_build_ms": 1.4
+      },
+      {
+        "workspace": ".",
+        "query": "coder best of N candidate selection worktree",
+        "ground_truth": [
+          "agent/nodes/coder.py",
+          "tools/best_of_n.py"
+        ],
+        "legacy": {
+          "method": "legacy",
+          "n_files_returned": 14,
+          "top_files": [
+            "README.md",
+            ".coverage",
+            "render.yaml",
+            ".env.example",
+            "demo/transcript.json"
+          ],
+          "total_chars": 81247,
+          "rank_of_first_ground_truth": null,
+          "elapsed_ms": 35.24458361789584
+        },
+        "graph": {
+          "method": "graph",
+          "n_files_returned": 5,
+          "top_files": [
+            "tests/test_worktree.py",
+            "tests/test_best_of_n_integration.py",
+            "tools/git_ops.py",
+            "tools/best_of_n.py",
+            "agent/nodes/coder.py"
+          ],
+          "total_chars": 45300,
+          "rank_of_first_ground_truth": 4,
+          "elapsed_ms": 0.11499971151351929
+        },
+        "char_reduction_x": 1.794,
+        "graph_build_ms": 76.3
+      },
+      {
+        "workspace": ".",
+        "query": "tree sitter repo graph pagerank ranking",
+        "ground_truth": [
+          "tools/repo_graph.py"
+        ],
+        "legacy": {
+          "method": "legacy",
+          "n_files_returned": 8,
+          "top_files": [
+            "README.md",
+            "pyproject.toml",
+            "tools/repo_graph.py",
+            "demo/transcript.json",
+            "Makefile"
+          ],
+          "total_chars": 51825,
+          "rank_of_first_ground_truth": 3,
+          "elapsed_ms": 14.36979090794921
+        },
+        "graph": {
+          "method": "graph",
+          "n_files_returned": 5,
+          "top_files": [
+            "tools/repo_graph.py",
+            "tests/test_worktree.py",
+            "tests/test_mcp_server.py",
+            "tests/test_repo_graph.py",
+            "tools/git_ops.py"
+          ],
+          "total_chars": 52472,
+          "rank_of_first_ground_truth": 1,
+          "elapsed_ms": 0.15341676771640778
+        },
+        "char_reduction_x": 0.988,
+        "graph_build_ms": 67.0
+      },
+      {
+        "workspace": ".",
+        "query": "server sent events bus subscribe replay",
+        "ground_truth": [
+          "app/events.py",
+          "app/api/tasks.py"
+        ],
+        "legacy": {
+          "method": "legacy",
+          "n_files_returned": 29,
+          "top_files": [
+            "README.md",
+            "pyproject.toml",
+            "agentic_coder.egg-info/PKG-INFO",
+            "frontend/Dockerfile",
+            "app/api/tasks.py"
+          ],
+          "total_chars": 40526,
+          "rank_of_first_ground_truth": 5,
+          "elapsed_ms": 297.4895420484245
+        },
+        "graph": {
+          "method": "graph",
+          "n_files_returned": 3,
+          "top_files": [
+            "app/events.py",
+            "app/api/tasks.py",
+            "tests/test_demo_endpoint.py"
+          ],
+          "total_chars": 17588,
+          "rank_of_first_ground_truth": 1,
+          "elapsed_ms": 0.13562478125095367
+        },
+        "char_reduction_x": 2.304,
+        "graph_build_ms": 78.2
+      },
+      {
+        "workspace": ".",
+        "query": "reviewer approve diff revise coder",
+        "ground_truth": [
+          "agent/nodes/reviewer.py"
+        ],
+        "legacy": {
+          "method": "legacy",
+          "n_files_returned": 40,
+          "top_files": [
+            "README.md",
+            "demo/transcript.json",
+            ".coverage",
+            "agentic_coder.egg-info/PKG-INFO",
+            "frontend/node_modules/cytoscape/.github/PULL_REQUEST_TEMPLATE.md"
+          ],
+          "total_chars": 86071,
+          "rank_of_first_ground_truth": null,
+          "elapsed_ms": 11884.538083802909
+        },
+        "graph": {
+          "method": "graph",
+          "n_files_returned": 5,
+          "top_files": [
+            "tests/test_best_of_n_integration.py",
+            "tools/git_ops.py",
+            "agent/graph.py",
+            "agent/nodes/coder.py",
+            "agent/nodes/reviewer.py"
+          ],
+          "total_chars": 53181,
+          "rank_of_first_ground_truth": 5,
+          "elapsed_ms": 0.1244591549038887
+        },
+        "char_reduction_x": 1.618,
+        "graph_build_ms": 75.0
+      },
+      {
+        "workspace": ".",
+        "query": "run tests baseline comparison failure",
+        "ground_truth": [
+          "agent/nodes/tester.py",
+          "tools/best_of_n.py"
+        ],
+        "legacy": {
+          "method": "legacy",
+          "n_files_returned": 16,
+          "top_files": [
+            "Makefile",
+            "Dockerfile",
+            ".coverage",
+            "pyproject.toml",
+            "render.yaml"
+          ],
+          "total_chars": 62729,
+          "rank_of_first_ground_truth": null,
+          "elapsed_ms": 37.916334345936775
+        },
+        "graph": {
+          "method": "graph",
+          "n_files_returned": 5,
+          "top_files": [
+            "tests/test_best_of_n_selector.py",
+            "benchmarks/e2e_perf.py",
+            "benchmarks/retrieval.py",
+            "benchmarks/build_perf.py",
+            "tools/best_of_n.py"
+          ],
+          "total_chars": 22120,
+          "rank_of_first_ground_truth": 5,
+          "elapsed_ms": 0.13449974358081818
+        },
+        "char_reduction_x": 2.836,
+        "graph_build_ms": 67.3
+      },
+      {
+        "workspace": ".",
+        "query": "MCP tool resource repo graph server",
+        "ground_truth": [
+          "mcp_server/server.py",
+          "mcp_server/resources.py",
+          "mcp_server/tools.py"
+        ],
+        "legacy": {
+          "method": "legacy",
+          "n_files_returned": 17,
+          "top_files": [
+            "README.md",
+            "pyproject.toml",
+            "frontend/package-lock.json",
+            "frontend/node_modules/.package-lock.json",
+            "frontend/node_modules/zod/package.json"
+          ],
+          "total_chars": 573901,
+          "rank_of_first_ground_truth": null,
+          "elapsed_ms": 148.63975020125508
+        },
+        "graph": {
+          "method": "graph",
+          "n_files_returned": 5,
+          "top_files": [
+            "tests/test_mcp_server.py",
+            "tools/repo_graph.py",
+            "llm/provider.py",
+            "mcp_server/server.py",
+            "mcp_server/resources.py"
+          ],
+          "total_chars": 44646,
+          "rank_of_first_ground_truth": 4,
+          "elapsed_ms": 0.15312526375055313
+        },
+        "char_reduction_x": 12.854,
+        "graph_build_ms": 67.3
+      }
+    ],
+    "summary": {
+      "n_queries": 9,
+      "mean_char_reduction_x": 2.92,
+      "median_char_reduction_x": 1.62,
+      "min_char_reduction_x": 0.99,
+      "max_char_reduction_x": 12.85,
+      "ci_95_char_reduction_x": [
+        1.09,
+        3.63
+      ],
+      "p_value_reduction_ge_1": 0.014839,
+      "mrr_legacy": 0.281,
+      "mrr_graph": 0.656,
+      "mrr_uplift_absolute": 0.374,
+      "n_queries_where_graph_wins": 7
+    }
+  },
+  "build_perf": {
+    "mini_py_fixture": {
+      "label": "mini_py_fixture",
+      "n_runs": 30,
+      "files_parsed": 6,
+      "mean_ms": 0.9,
+      "median_ms": 0.9,
+      "p95_ms": 1.1,
+      "min_ms": 0.9,
+      "max_ms": 1.1,
+      "stdev_ms": 0.0,
+      "ci_95_mean_ms": [
+        0.9,
+        0.9
+      ]
+    },
+    "vegapunk_self": {
+      "label": "vegapunk_self",
+      "n_runs": 30,
+      "files_parsed": 81,
+      "mean_ms": 68.5,
+      "median_ms": 66.9,
+      "p95_ms": 79.0,
+      "min_ms": 65.7,
+      "max_ms": 79.3,
+      "stdev_ms": 4.4,
+      "ci_95_mean_ms": [
+        66.9,
+        70.2
+      ]
+    }
+  },
+  "e2e": {
+    "n_runs": 10,
+    "n_passed": 10,
+    "n_failed": 0,
+    "success_rate": 1.0,
+    "mean_s": 3.417,
+    "median_s": 3.333,
+    "p95_s": 4.096,
+    "min_s": 3.287,
+    "max_s": 4.096,
+    "stdev_s": 0.246,
+    "ci_95_mean_s": [
+      3.241,
+      3.592
+    ]
+  }
+}
