@@ -84,15 +84,20 @@ effect size given the small sample.
 
 ### Comparison to research
 
-The 2026 Codebase-Memory study
-([Anthony West](https://anthonywest.co.uk/research/code-intelligence-indexing-2026-openai))
-reports **~10× fewer tokens and 2.1× fewer tool calls** across
-**31 repositories**. Our measurement is smaller (2.92× mean) but:
+The 2026 Codebase-Memory study [\[1\]](#ref-1) reports **~10× fewer
+tokens and 2.1× fewer tool calls** across **31 repositories** when a
+tree-sitter knowledge graph is exposed to coding agents over MCP. Our
+measurement is smaller (2.92× mean) but:
 
 - Our sample is 9 queries on 2 codebases; the study's is much broader.
 - Our **best case (12.85×) is in the research ballpark**.
 - Our p-value confirms the reduction is not noise.
 - Both methods agree the graph is directionally the same win.
+
+The hybrid keyword × PageRank scoring itself extends the original
+Aider repomap design [\[2\]](#ref-2) — pure PageRank tends to bury
+files that match a rare query term; the keyword overlay fixes that
+while preserving the structural-importance signal.
 
 Honest read: graph retrieval is materially better than the regex
 baseline on this codebase, though not by the full 10× the research
@@ -118,10 +123,12 @@ distribution (df = 29).
 Very tight distribution (CI width < 4 ms on 30 samples) — the build
 is deterministic modulo OS-level noise.
 
-**Comparison:** Aider's repomap targets "sub-second on typical repos";
-our numbers are ~15× under that on a directly comparable codebase.
-The unit test perf budget in [`tests/test_repo_graph.py`](../tests/test_repo_graph.py)
-asserts `<3 s` on the fixture and we clear it by 3000×.
+**Comparison:** Aider's repomap [\[2\]](#ref-2) is designed to stay
+cheap to rebuild on every LLM turn so the map can be refreshed as the
+agent works. Our 68.5 ms build on the Vegapunk repo is well inside
+that envelope. The unit-test perf budget in
+[`tests/test_repo_graph.py`](../tests/test_repo_graph.py) asserts
+`<3 s` on the fixture and we clear it by 3000×.
 
 ---
 
@@ -151,6 +158,13 @@ pytest subprocess, event bus — runs for real.
 mocked edges. Any regression that breaks Setup → Router → Planner
 → Coder (K=3 parallel + selector) → Tester → Reviewer → PR Creator
 flow will fail this test.
+
+The Best-of-N Coder mechanic itself is a direct application of
+execution-verified rewards from the DeepSWE [\[3\]](#ref-3) /
+ACECoder [\[4\]](#ref-4) line of work — those apply the technique at
+*training* time; we apply it at *inference* time (K candidates → real
+tests → keep the winner) so the same signal shapes the output
+without needing to train anything.
 
 ---
 
@@ -208,3 +222,62 @@ loop.
   follow-up.
 - **The E2E pipeline uses recorded LLM responses.** It confirms the
   plumbing works; it can't validate the LLM's own decisions.
+- **The MCTS-based ceiling raise from SWE-Search [\[5\]](#ref-5) is
+  documented but not shipped.** Wrapping Best-of-N in MCTS + a Value
+  Agent + a Discriminator is the next natural quality-lift beyond
+  what's measured here — the paper reports +23% relative on
+  SWE-bench Verified across five base models.
+
+---
+
+## References <a id="references"></a>
+
+Prior work informing the design and cited above.
+
+<a id="ref-1"></a>**[1] Code Intelligence & Code-Graph Indexing for AI Agents.**
+Anthony West. Research blog, 2026. Reports ~10× token reduction and
+2.1× fewer tool calls when tree-sitter knowledge graphs are exposed
+to coding agents over MCP, measured across 31 repositories. Directly
+informs Vegapunk's retrieval design (see
+[`tools/repo_graph.py`](../tools/repo_graph.py)).  
+<https://anthonywest.co.uk/research/code-intelligence-indexing-2026-openai>
+
+<a id="ref-2"></a>**[2] Building a better repository map with tree sitter.**
+Paul Gauthier (Aider). Blog post, 22 October 2023. Original
+description of the tree-sitter + PageRank repomap pattern.
+Vegapunk's implementation extends it with a hybrid keyword × PageRank
+score (`alpha=0.7` default) to avoid the pure-PageRank failure mode
+of burying rare-keyword files.  
+<https://aider.chat/2023/10/22/repomap.html>
+
+<a id="ref-3"></a>**[3] DeepSWE: Training a Fully Open-sourced,
+State-of-the-Art Coding Agent by Scaling RL.**
+Together AI. Blog post, 2026. Trains Qwen3-32B into a competitive
+coding agent via pure RL with execution-verified rewards (test
+pass/fail as the reward signal). Underpins Vegapunk's Best-of-N
+selector — the same "verify by running the tests" principle,
+applied at inference time instead of training time.  
+<https://www.together.ai/blog/deepswe>
+
+<a id="ref-4"></a>**[4] ACECODER: Acing Coder RL via Automated
+Test-Case Synthesis.**
+Zeng et al. arXiv:2502.01718, February 2025. Uses automatically
+synthesized test cases as verifiable rewards during coder RL. Same
+core insight as [\[3\]](#ref-3): "the test either passes or it
+doesn't" is a cleaner reward than reward-model preference scores.  
+<https://arxiv.org/abs/2502.01718>
+
+<a id="ref-5"></a>**[5] SWE-Search: Enhancing Software Agents with
+Monte Carlo Tree Search and Iterative Refinement.**
+Antoniades et al. arXiv:2410.20285, October 2024. Wraps a base
+software agent in MCTS + a Value Agent + multi-agent Discriminator
+debate for a 23% relative uplift on SWE-bench across five base
+models. Not shipped in Vegapunk today; noted as the natural next
+quality-lift beyond the Best-of-N inference-time mechanic.  
+<https://arxiv.org/abs/2410.20285>
+
+---
+
+*The MCP protocol Vegapunk exposes its tools through is documented
+separately at <https://modelcontextprotocol.io> and integration
+details are in [`mcp_server/README.md`](../mcp_server/README.md).*
