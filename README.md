@@ -1,6 +1,6 @@
 # Vegapunk — Autonomous Coding Agent
 
-[![CI](https://github.com/OWNER/REPO/actions/workflows/ci.yml/badge.svg)](https://github.com/OWNER/REPO/actions/workflows/ci.yml)
+[![CI](https://github.com/vedant1711/Vegapunk-Agentic-AI-Code-Agent/actions/workflows/ci.yml/badge.svg)](https://github.com/vedant1711/Vegapunk-Agentic-AI-Code-Agent/actions/workflows/ci.yml)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
 [![Node 18+](https://img.shields.io/badge/node-18%2B-brightgreen.svg)](https://nodejs.org/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](#license)
@@ -15,15 +15,14 @@ Vegapunk is an autonomous coding agent that resolves GitHub issues end-to-end. I
 - **Free-tier deployable** — Vercel (frontend) + Render (backend), plus a self-host docker-compose
 - **Demo mode** — pre-recorded transcript replays a full run without API keys, perfect for portfolio review
 
-> Replace `OWNER/REPO` in the badge URLs above with your GitHub path after your first push.
-
 ---
 
 ## Try it live
 
-- **Deployed demo:** _add your Vercel URL here after first deploy_
+- **Deployed demo:** <https://vegapunk-agentic-ai-code-agent.vercel.app/>
+- **Architecture walkthrough** (rendered diagrams, no code needed): <https://vegapunk-agentic-ai-code-agent.vercel.app/architecture>
 - Or **run locally** in two commands (see [Quickstart](#quickstart-local) below)
-- No API keys? Click **Try demo** in the UI to replay a pre-recorded run
+- No API keys? Click **Try demo** in the deployed UI to replay a pre-recorded run
 
 ---
 
@@ -195,7 +194,7 @@ Both retry loops (Tester → Coder, Reviewer → Coder) cap at `max_retries` (de
 
 ```bash
 # 1. Clone + set up
-git clone https://github.com/OWNER/REPO.git vegapunk
+git clone https://github.com/vedant1711/Vegapunk-Agentic-AI-Code-Agent.git vegapunk
 cd vegapunk
 python -m venv .venv && source .venv/bin/activate
 make install

@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import Header from "@/components/header";
 import RunHeader from "@/components/run-header";
 import StepCard from "@/components/step-card";
 import TaskForm from "@/components/task-form";
@@ -211,35 +212,9 @@ export default function Dashboard() {
     [startRun],
   );
 
-  const statusDotColor =
-    run.status === "running"
-      ? "var(--running)"
-      : run.status === "completed"
-      ? "var(--success)"
-      : run.status === "failed"
-      ? "var(--error)"
-      : "var(--border-strong)";
-
   return (
     <div className="min-h-screen">
-      <header className="border-b border-[var(--border)]">
-        <div className="max-w-5xl mx-auto px-6 py-4 flex items-center justify-between">
-          <div className="flex items-baseline gap-3">
-            <h1 className="text-lg font-semibold tracking-tight">Vegapunk</h1>
-            <span className="text-xs text-[var(--text-muted)]">Autonomous Coding Agent</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <span
-              className="status-dot"
-              style={{
-                background: statusDotColor,
-                boxShadow: run.status === "running" ? `0 0 8px ${statusDotColor}` : "none",
-              }}
-            />
-            <span className="text-xs text-[var(--text-muted)] capitalize">{run.status}</span>
-          </div>
-        </div>
-      </header>
+      <Header runStatus={run.status} />
 
       <main className="max-w-5xl mx-auto px-6 py-6 space-y-4">
         <TaskForm
